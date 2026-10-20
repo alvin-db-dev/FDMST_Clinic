@@ -1,0 +1,8 @@
+# Nixpacks (used by Coolify) sees Vite in this project and would otherwise
+# serve only the built pages with Caddy, without starting the Node server.
+# Run the Express server instead: it serves the pages, /api and Socket.IO.
+[variables]
+NIXPACKS_SPA_CADDY = "false"
+
+[start]
+cmd = "node server.js"

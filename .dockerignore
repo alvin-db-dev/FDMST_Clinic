@@ -1,0 +1,14 @@
+.git
+.gitignore
+.DS_Store
+**/.DS_Store
+.env
+.env.*
+!.env.example
+node_modules
+dist
+.mongo
+tests
+README.md
+*.log
+npm-debug.log*
