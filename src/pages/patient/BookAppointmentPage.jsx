@@ -313,14 +313,16 @@ function BookAppointmentPage() {
     const params = new URLSearchParams(location.search)
     const service = params.get('service')
     const promoCode = params.get('promoCode')
+    const date = params.get('date') || params.get('appointmentDate')
 
-    if (!service && !promoCode) return
+    if (!service && !promoCode && !date) return
 
     const timeoutId = window.setTimeout(() => {
       setForm((currentForm) => ({
         ...currentForm,
         service: service || currentForm.service,
         promoCode: promoCode || currentForm.promoCode,
+        appointmentDate: date || currentForm.appointmentDate,
       }))
     }, 0)
 

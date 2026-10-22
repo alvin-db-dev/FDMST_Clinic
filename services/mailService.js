@@ -1,6 +1,17 @@
 const DEFAULT_FROM_NAME = "Flores-Dizon Dental Clinic";
 
-const isMailConfigured = () => Boolean(process.env.MAIL_API_URL && process.env.MAIL_API_KEY);
+const isPlaceholder = (value) => {
+  if (!value) return true;
+  return /your-mail-api|example\.com|replace-with|example\.org/i.test(value);
+};
+
+const isMailConfigured = () =>
+  Boolean(
+    process.env.MAIL_API_URL &&
+    process.env.MAIL_API_KEY &&
+    !isPlaceholder(process.env.MAIL_API_URL) &&
+    !isPlaceholder(process.env.MAIL_API_KEY)
+  );
 
 const escapeHtml = (value) =>
   String(value || "")
@@ -11,12 +22,6 @@ const escapeHtml = (value) =>
     .replace(/'/g, "&#39;");
 
 const sendMail = async ({ to, subject, message, html, attachments = [] }) => {
-  if (!isMailConfigured()) {
-    const error = new Error("Mail API is not configured.");
-    error.status = 503;
-    throw error;
-  }
-
   const recipient = String(to || "").trim();
   if (!recipient) {
     const error = new Error("Recipient email is required.");
@@ -24,38 +29,70 @@ const sendMail = async ({ to, subject, message, html, attachments = [] }) => {
     throw error;
   }
 
-  const response = await fetch(process.env.MAIL_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "X-API-Key": process.env.MAIL_API_KEY,
-    },
-    body: JSON.stringify({
-      to: recipient,
-      subject,
-      message,
-      html,
-      fromName: process.env.MAIL_FROM_NAME || DEFAULT_FROM_NAME,
-      attachments,
-    }),
-  });
+  const isDev = process.env.NODE_ENV !== "production";
 
-  const text = await response.text();
-  let data = null;
+  if (!isMailConfigured()) {
+    if (isDev) {
+      console.log("\n========================================");
+      console.log("[DEV MAIL] Mail service not configured; simulated email delivery.");
+      console.log(`To: ${recipient}`);
+      console.log(`Subject: ${subject}`);
+      if (message) console.log(`Message: ${message}`);
+      console.log("========================================\n");
+      return { message: "Email simulated in development mode.", simulated: true };
+    }
 
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = text ? { message: text } : null;
-  }
-
-  if (!response.ok) {
-    const error = new Error(data?.message || "Mail API request failed.");
-    error.status = response.status;
+    const error = new Error("Mail API is not configured.");
+    error.status = 503;
     throw error;
   }
 
-  return data || { message: "Email sent." };
+  try {
+    const response = await fetch(process.env.MAIL_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-API-Key": process.env.MAIL_API_KEY,
+      },
+      body: JSON.stringify({
+        to: recipient,
+        subject,
+        message,
+        html,
+        fromName: process.env.MAIL_FROM_NAME || DEFAULT_FROM_NAME,
+        attachments,
+      }),
+    });
+
+    const text = await response.text();
+    let data = null;
+
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch {
+      data = text ? { message: text } : null;
+    }
+
+    if (!response.ok) {
+      const error = new Error(data?.message || "Mail API request failed.");
+      error.status = response.status;
+      throw error;
+    }
+
+    return data || { message: "Email sent." };
+  } catch (err) {
+    if (isDev) {
+      console.warn(`[DEV MAIL] Mail API request failed (${err.message}). Falling back to development simulated email.`);
+      console.log("\n========================================");
+      console.log("[DEV MAIL FALLBACK]");
+      console.log(`To: ${recipient}`);
+      console.log(`Subject: ${subject}`);
+      if (message) console.log(`Message: ${message}`);
+      console.log("========================================\n");
+      return { message: "Email simulated in development mode (API request failed).", simulated: true };
+    }
+    throw err;
+  }
 };
 
 const sendOtpEmail = ({ to, otp, purpose }) => {

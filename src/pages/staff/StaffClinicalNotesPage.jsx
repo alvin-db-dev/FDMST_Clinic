@@ -169,7 +169,7 @@ function NoteModal({
             <section className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4 lg:col-span-3">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <h3 className="text-sm font-bold text-emerald-950">Follow-up Booking</h3>
+                  <h3 className="text-sm font-bold text-emerald-950">Return Appointment Booking</h3>
                   <p className="mt-1 text-xs font-semibold text-emerald-700">Created from this clinical recommendation.</p>
                 </div>
                 <span className="rounded-full bg-white px-3 py-1 text-xs font-bold uppercase tracking-wide text-emerald-700 shadow-sm">
@@ -191,7 +191,7 @@ function NoteModal({
                 </div>
                 <div className="rounded-xl bg-white p-3 shadow-sm">
                   <p className="text-[11px] font-bold uppercase tracking-wide text-slate-400">Reason</p>
-                  <p className="mt-1 text-sm font-bold text-slate-800">{form.clinicalFollowUp.reason || 'Follow-up appointment recommended.'}</p>
+                  <p className="mt-1 text-sm font-bold text-slate-800">{form.clinicalFollowUp.reason || 'Return appointment recommended.'}</p>
                 </div>
               </div>
             </section>
@@ -205,13 +205,13 @@ function NoteModal({
                   checked={Boolean(form.followUp?.enabled)}
                   onChange={(event) => updateFollowUp('enabled', event.target.checked)}
                 />
-                Book follow-up appointment and notify patient
+                Book return appointment and notify patient
               </label>
               {form.followUp?.enabled ? (
                 <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-stretch">
                   <div className="grid gap-3 md:w-64 md:shrink-0">
                     <label className="grid gap-2 text-sm font-bold text-slate-600">
-                      Follow-up Date
+                      Return Date
                       <span className="relative block">
                         <FaCalendarAlt className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                         <input
@@ -246,7 +246,7 @@ function NoteModal({
                   </div>
                   <label className="grid min-w-0 flex-1 gap-2 text-sm font-bold text-slate-600">
                     Reason
-                    <textarea className={`${textareaClass} min-h-[7.75rem]`} value={form.followUp?.reason || ''} onChange={(event) => updateFollowUp('reason', event.target.value)} placeholder="Follow-up reason" />
+                    <textarea className={`${textareaClass} min-h-[7.75rem]`} value={form.followUp?.reason || ''} onChange={(event) => updateFollowUp('reason', event.target.value)} placeholder="Return appointment reason" />
                   </label>
                   {followUpAvailabilityMessage && form.followUp?.date ? (
                     <div className="rounded-xl border border-sky-100 bg-white px-3 py-2 text-xs font-semibold text-slate-500 md:basis-full">

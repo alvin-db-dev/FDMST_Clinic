@@ -17,6 +17,7 @@ export const formatDate = (value) => {
 
 export const formatStatus = (status) => {
   if (!status) return '—'
+  if (status === 'follow_up') return 'Return Appointment'
 
   return status
     .split('_')

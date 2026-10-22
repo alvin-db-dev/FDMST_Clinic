@@ -10,6 +10,7 @@ import {
   FaExclamationTriangle,
   FaEye,
   FaImage,
+  FaMagic,
   FaPlus,
   FaPowerOff,
   FaSearch,
@@ -38,6 +39,17 @@ const initialForm = {
   maxRedemptions: '',
   status: 'active',
   audience: 'all',
+}
+
+function generatePromoCode(title = '') {
+  const cleanTitle = String(title || '')
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]+/g, '')
+    .slice(0, 8)
+  const prefix = cleanTitle || 'FD'
+  const randomSuffix = Math.random().toString(36).slice(2, 6).toUpperCase()
+  return `${prefix}${randomSuffix}`
 }
 
 const promotionInputClass = `${inputClass} w-full min-w-0 rounded-xl`
@@ -108,6 +120,7 @@ function AdminPromotionsPage() {
   const [form, setForm] = useState(initialForm)
   const [editingId, setEditingId] = useState('')
   const [isCreateOpen, setIsCreateOpen] = useState(false)
+  const [isAutoCode, setIsAutoCode] = useState(true)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [fieldErrors, setFieldErrors] = useState({})
@@ -220,6 +233,7 @@ function AdminPromotionsPage() {
     setForm(initialForm)
     setEditingId('')
     setIsCreateOpen(false)
+    setIsAutoCode(true)
     setFieldErrors({})
     setSubmitError('')
     setServiceSearch('')
@@ -233,6 +247,12 @@ function AdminPromotionsPage() {
 
   const openCreatePromotion = () => {
     resetForm()
+    const autoCode = generatePromoCode('FD')
+    setForm((current) => ({
+      ...current,
+      promoCode: autoCode,
+    }))
+    setIsAutoCode(true)
     setIsCreateOpen(true)
   }
 
@@ -269,8 +289,16 @@ function AdminPromotionsPage() {
     const { name, value } = event.target
     const nextStartDate = name === 'startDate' ? value : form.startDate
     const nextEndDate = name === 'endDate' ? value : form.endDate
+
+    if (name === 'promoCode') {
+      setIsAutoCode(false)
+    }
+
     setForm((current) => {
       const next = { ...current, [name]: value }
+      if (name === 'title' && !editingId && isAutoCode) {
+        next.promoCode = generatePromoCode(value)
+      }
       if (name === 'discountType' || name === 'discountValue') {
         const previousLabel = current.discountType === 'percentage' ? `${current.discountValue}% off` : `₱${current.discountValue} off`
         if (current.discountLabel === previousLabel) {
@@ -373,10 +401,20 @@ function AdminPromotionsPage() {
     setFieldErrors((current) => ({ ...current, imageUrl: '' }))
   }
 
+  const handleRegenerateCode = () => {
+    const newCode = generatePromoCode(form.title || 'FD')
+    setForm((current) => ({ ...current, promoCode: newCode }))
+    setFieldErrors((current) => ({ ...current, promoCode: '' }))
+    setIsAutoCode(true)
+  }
+
   const validate = () => {
     const errors = {}
     if (!form.title.trim()) errors.title = 'Promotion title is required.'
-    if (!form.promoCode.trim()) errors.promoCode = 'Promo code is required.'
+    if (!form.promoCode.trim()) {
+      const fallbackCode = generatePromoCode(form.title || 'FD')
+      setForm((current) => ({ ...current, promoCode: fallbackCode }))
+    }
     if (!selectedServices.length) errors.applicableServices = 'Select at least one service or All Services.'
     if (fieldErrors.imageUrl) errors.imageUrl = fieldErrors.imageUrl
     const discountValue = Number(form.discountValue)
@@ -450,6 +488,7 @@ function AdminPromotionsPage() {
 
   const editPromotion = (promotion) => {
     setIsCreateOpen(false)
+    setIsAutoCode(false)
     setImageFile(null)
     setImagePreview('')
     setUploadedImageUrl('')
@@ -518,8 +557,37 @@ function AdminPromotionsPage() {
               {fieldErrors.title ? <span className="text-xs text-red-600">{fieldErrors.title}</span> : null}
             </label>
             <label className="grid gap-2 text-sm font-semibold text-sky-950">
-              Promo Code
-              <input className={promotionInputClass} name="promoCode" value={form.promoCode} onChange={handleChange} placeholder="FD2026" required />
+              <div className="flex items-center justify-between">
+                <span>Promo Code</span>
+                <button
+                  type="button"
+                  onClick={handleRegenerateCode}
+                  className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-700 hover:text-amber-800 transition"
+                  title="Generate new promo code"
+                >
+                  <FaMagic className="h-3 w-3" /> Auto-generate
+                </button>
+              </div>
+              <div className="relative flex items-center">
+                <input
+                  className={`${promotionInputClass} pr-24 font-mono font-bold tracking-wider uppercase`}
+                  name="promoCode"
+                  value={form.promoCode}
+                  onChange={handleChange}
+                  placeholder="e.g. FD4X9A"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={handleRegenerateCode}
+                  className="absolute right-2 inline-flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-800 hover:bg-amber-100 ring-1 ring-amber-200 transition"
+                >
+                  <FaMagic className="h-2.5 w-2.5" /> New Code
+                </button>
+              </div>
+              <p className="text-[11px] font-normal text-slate-500">
+                Automatically generated for you based on the promotion title. You can also customize it or click &quot;New Code&quot;.
+              </p>
               {fieldErrors.promoCode ? <span className="text-xs text-red-600">{fieldErrors.promoCode}</span> : null}
             </label>
             <label className="grid gap-2 text-sm font-semibold text-sky-950">

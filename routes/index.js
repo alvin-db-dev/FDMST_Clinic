@@ -691,10 +691,24 @@ const normalizeClinicSettingsBody = (body = {}) => {
   return normalized;
 };
 
-const sanitizePatientDentalRecord = (record) => {
+const sanitizePatientDentalRecord = async (record) => {
   const value = record.toObject ? record.toObject() : { ...record };
   delete value.clinicalNotes;
-  return value;
+  const attachments = await Promise.all((value.attachments || []).map(async (attachment) => ({
+    id: attachment._id,
+    name: attachment.name,
+    path: attachment.path,
+    bucket: attachment.bucket,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    category: attachment.category || (String(attachment.mimeType || "").startsWith("image/") ? "xray" : "file"),
+    uploadedAt: attachment.uploadedAt,
+    url: (await createClinicalFileSignedUrl(attachment).catch(() => "")) || attachment.url || "",
+  })));
+  return {
+    ...value,
+    attachments,
+  };
 };
 
 const escapeRegex = (value) => String(value || "").trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -1104,8 +1118,20 @@ const auditClinicalNoteAction = (req, record, action) => AuditLog.create({
   },
 }).catch(() => {});
 
-const sanitizeTreatmentRecord = (record) => {
+const sanitizeTreatmentRecord = async (record) => {
   const value = record.toObject ? record.toObject() : { ...record };
+  const attachments = await Promise.all((value.attachments || []).map(async (attachment) => ({
+    id: attachment._id,
+    name: attachment.name,
+    path: attachment.path,
+    bucket: attachment.bucket,
+    mimeType: attachment.mimeType,
+    size: attachment.size,
+    category: attachment.category || (String(attachment.mimeType || "").startsWith("image/") ? "xray" : "file"),
+    uploadedAt: attachment.uploadedAt,
+    url: (await createClinicalFileSignedUrl(attachment).catch(() => "")) || attachment.url || "",
+  })));
+
   return {
     id: value._id,
     recordType: value.recordType || "treatment_record",
@@ -1118,6 +1144,7 @@ const sanitizeTreatmentRecord = (record) => {
     procedure: value.procedure || value.servicePerformed || value.treatment,
     servicePerformed: value.servicePerformed,
     toothNumber: value.toothNumber,
+    toothColorMap: value.toothColorMap instanceof Map ? Object.fromEntries(value.toothColorMap) : (value.toothColorMap || {}),
     diagnosis: value.diagnosis,
     treatmentPerformed: value.treatmentPerformed || value.treatment,
     materialsUsed: value.materialsUsed,
@@ -1125,6 +1152,8 @@ const sanitizeTreatmentRecord = (record) => {
     recommendations: value.recommendations,
     nextVisitRecommendation: value.nextVisitRecommendation,
     notes: value.notes,
+    attachments,
+    treatmentPlan: value.treatmentPlan || { enabled: false, title: "", notes: "", steps: [] },
     appointmentSnapshot: value.appointmentSnapshot || null,
     dentistName: value.dentistName,
     createdBy: value.createdBy,
@@ -1981,7 +2010,7 @@ router.get("/dentalrecords/treatment-records", authorize("admin", "staff"), asyn
     const enrichedRecords = await enrichRecordsWithPatientInfo(records);
 
     res.json({
-      data: enrichedRecords.map(sanitizeTreatmentRecord),
+      data: await Promise.all(enrichedRecords.map(sanitizeTreatmentRecord)),
       summary: {
         total,
         completed: allMatching.filter((record) => (record.treatmentStatus || "completed") === "completed").length,
@@ -2034,6 +2063,7 @@ router.post("/dentalrecords/treatment-records", authorize("admin", "staff"), asy
     }
 
     const provider = providerName(req.user);
+    const attachments = normalizeClinicalAttachments(req.body.attachments, req.user);
     const record = await DentalRecord.create({
       recordType: "treatment_record",
       patient: appointment?.patient,
@@ -2043,6 +2073,7 @@ router.post("/dentalrecords/treatment-records", authorize("admin", "staff"), asy
       procedure,
       servicePerformed: procedure,
       toothNumber: String(req.body.toothNumber || "").trim(),
+      toothColorMap: req.body.toothColorMap && typeof req.body.toothColorMap === "object" ? req.body.toothColorMap : {},
       diagnosis: String(req.body.diagnosis || "").trim(),
       treatment: String(req.body.treatmentPerformed || req.body.treatmentDescription || "").trim(),
       treatmentPerformed: String(req.body.treatmentPerformed || req.body.treatmentDescription || "").trim(),
@@ -2052,13 +2083,122 @@ router.post("/dentalrecords/treatment-records", authorize("admin", "staff"), asy
       nextVisitRecommendation: String(req.body.nextVisitRecommendation || req.body.followUpNotes || "").trim(),
       dentistName: provider,
       notes: String(req.body.notes || "").trim(),
+      attachments,
+      treatmentPlan: req.body.treatmentPlan && typeof req.body.treatmentPlan === "object"
+        ? {
+            enabled: Boolean(req.body.treatmentPlan.enabled),
+            title: String(req.body.treatmentPlan.title || "").trim(),
+            notes: String(req.body.treatmentPlan.notes || "").trim(),
+            steps: Array.isArray(req.body.treatmentPlan.steps)
+              ? req.body.treatmentPlan.steps.map((step, idx) => ({
+                  stepNumber: idx + 1,
+                  procedure: String(step.procedure || "").trim(),
+                  targetDate: step.targetDate ? parseReportDate(step.targetDate) : null,
+                  toothNumber: String(step.toothNumber || "").trim(),
+                  notes: String(step.notes || "").trim(),
+                  status: ["pending", "scheduled", "completed"].includes(step.status) ? step.status : "pending",
+                }))
+              : [],
+          }
+        : { enabled: false, title: "", notes: "", steps: [] },
       createdBy: req.user.id,
       createdByName: provider,
       createdByEmail: req.user.email,
     });
 
+    if (appointment) {
+      const now = new Date();
+      const settings = await ClinicSettings.findOne().lean();
+      const currentService = (settings?.services || []).find((s) => s.serviceName === appointment.service);
+      const revenueAmount = Number.isFinite(Number(appointment.finalPrice))
+        ? Number(appointment.finalPrice)
+        : Number.isFinite(Number(appointment.servicePriceSnapshot))
+          ? Number(appointment.servicePriceSnapshot)
+        : Number.isFinite(Number(currentService?.price))
+          ? Number(currentService.price)
+          : 0;
+
+      const appointmentUpdate = {
+        status: "completed",
+        completedAt: appointment.completedAt || record.visitDate || now,
+        completedBy: req.user.id,
+        completedByEmail: req.user.email,
+        statusUpdatedAt: now,
+        statusUpdatedBy: req.user.id,
+        statusUpdatedByEmail: req.user.email,
+        estimatedRevenueAmount: revenueAmount,
+      };
+
+      if (!appointment.servicePriceSnapshot && currentService) {
+        appointmentUpdate.servicePriceSnapshot = revenueAmount;
+      }
+      if (!appointment.serviceDurationSnapshot && currentService?.duration) {
+        appointmentUpdate.serviceDurationSnapshot = Number(currentService.duration);
+      }
+      if (!appointment.serviceRef && currentService?._id) {
+        appointmentUpdate.serviceRef = currentService._id;
+      }
+
+      await Appointment.findByIdAndUpdate(appointment._id, {
+        $set: appointmentUpdate,
+        $push: {
+          timeline: {
+            status: "completed",
+            action: "Appointment completed",
+            performedBy: req.user.id,
+            performedByName: provider,
+            performedByEmail: req.user.email,
+            note: "Appointment automatically marked as completed upon treatment record creation.",
+            recordedAt: now,
+          },
+        },
+        $unset: { declineReason: "" },
+      });
+
+      try {
+        const patientDoc = appointment.patient
+          ? await Patient.findById(appointment.patient).select("userId email guardianEmail")
+          : await Patient.findOne({ email: appointment.email }).select("userId email guardianEmail");
+
+        if (patientDoc?.userId) {
+          const title = "Appointment completed";
+          const message = `Your ${appointment.service} treatment has been completed. Your treatment record is now available in My Records.`;
+
+          await Notification.create({
+            user: patientDoc.userId,
+            patient: patientDoc._id,
+            title,
+            message,
+            type: "appointment",
+            metadata: {
+              appointmentId: appointment._id,
+              event: "appointment_completed",
+            },
+          });
+
+          await sendPatientContactMail({
+            patient: patientDoc,
+            fallbackEmail: appointment.email,
+            subject: `${title} - Flores-Dizon Dental Clinic`,
+            message,
+            html: `
+              <div style="font-family: Arial, sans-serif; color: #0f172a; line-height: 1.6;">
+                <h2 style="color:#082f49;">${title}</h2>
+                <p>${message}</p>
+                <p><strong>Service:</strong> ${appointment.service}</p>
+                <p><strong>Date:</strong> ${new Date(appointment.appointmentDate).toLocaleDateString()}</p>
+                <p><strong>Time:</strong> ${appointment.appointmentTime}</p>
+              </div>
+            `,
+          }).catch(() => {});
+        }
+      } catch (notifyErr) {
+        console.error("Failed to notify patient of completed appointment:", notifyErr);
+      }
+    }
+
     await auditTreatmentRecordAction(req, record, "Treatment Record Created");
-    res.status(201).json({ message: "Treatment record created successfully.", data: sanitizeTreatmentRecord(record) });
+    res.status(201).json({ message: "Treatment record created successfully.", data: await sanitizeTreatmentRecord(record) });
   } catch (error) {
     next(error);
   }
@@ -2075,7 +2215,7 @@ router.get("/dentalrecords/treatment-records/:id", authorize("admin", "staff"), 
     const [enrichedRecord] = await enrichRecordsWithPatientInfo([record]);
 
     await auditTreatmentRecordAction(req, enrichedRecord, "Treatment Record Viewed");
-    res.json({ data: sanitizeTreatmentRecord(enrichedRecord) });
+    res.json({ data: await sanitizeTreatmentRecord(enrichedRecord) });
   } catch (error) {
     next(error);
   }
@@ -2098,6 +2238,9 @@ router.patch("/dentalrecords/treatment-records/:id", authorize("admin", "staff")
     record.procedure = String(req.body.procedure || record.procedure || "").trim();
     record.servicePerformed = String(req.body.procedure || req.body.servicePerformed || record.servicePerformed || "").trim();
     record.toothNumber = String(req.body.toothNumber || "").trim();
+    if (req.body.toothColorMap && typeof req.body.toothColorMap === "object") {
+      record.toothColorMap = new Map(Object.entries(req.body.toothColorMap));
+    }
     record.diagnosis = String(req.body.diagnosis || "").trim();
     record.treatment = String(req.body.treatmentPerformed || req.body.treatmentDescription || "").trim();
     record.treatmentPerformed = String(req.body.treatmentPerformed || req.body.treatmentDescription || "").trim();
@@ -2106,10 +2249,60 @@ router.patch("/dentalrecords/treatment-records/:id", authorize("admin", "staff")
     record.recommendations = String(req.body.recommendations || req.body.followUpNotes || "").trim();
     record.nextVisitRecommendation = String(req.body.nextVisitRecommendation || req.body.followUpNotes || "").trim();
     record.notes = String(req.body.notes || "").trim();
+    let removedAttachments = [];
+    if (Object.prototype.hasOwnProperty.call(req.body, "attachments")) {
+      const nextAttachments = normalizeClinicalAttachments(req.body.attachments, req.user);
+      const retainedPaths = new Set(nextAttachments.map((attachment) => attachment.path));
+      removedAttachments = (record.attachments || []).filter((attachment) => !retainedPaths.has(attachment.path));
+      record.attachments = nextAttachments;
+    }
+    if (req.body.treatmentPlan && typeof req.body.treatmentPlan === "object") {
+      record.treatmentPlan = {
+        enabled: Boolean(req.body.treatmentPlan.enabled),
+        title: String(req.body.treatmentPlan.title || "").trim(),
+        notes: String(req.body.treatmentPlan.notes || "").trim(),
+        steps: Array.isArray(req.body.treatmentPlan.steps)
+          ? req.body.treatmentPlan.steps.map((step, idx) => ({
+              stepNumber: idx + 1,
+              procedure: String(step.procedure || "").trim(),
+              targetDate: step.targetDate ? parseReportDate(step.targetDate) : null,
+              toothNumber: String(step.toothNumber || "").trim(),
+              notes: String(step.notes || "").trim(),
+              status: ["pending", "scheduled", "completed"].includes(step.status) ? step.status : "pending",
+            }))
+          : [],
+      };
+    }
     await record.save();
+    await Promise.allSettled(removedAttachments.map((attachment) => deleteClinicalFile(attachment)));
+
+    if (record.appointment) {
+      await Appointment.updateOne(
+        { _id: record.appointment, status: { $ne: "completed" } },
+        {
+          $set: {
+            status: "completed",
+            completedAt: record.visitDate || new Date(),
+            statusUpdatedAt: new Date(),
+          },
+          $push: {
+            timeline: {
+              status: "completed",
+              action: "Appointment completed",
+              performedBy: req.user.id,
+              performedByName: providerName(req.user),
+              performedByEmail: req.user.email,
+              note: "Appointment automatically marked as completed from treatment record.",
+              recordedAt: new Date(),
+            },
+          },
+          $unset: { declineReason: "" },
+        }
+      );
+    }
 
     await auditTreatmentRecordAction(req, record, "Treatment Record Updated");
-    res.json({ message: "Treatment record updated successfully.", data: sanitizeTreatmentRecord(record) });
+    res.json({ message: "Treatment record updated successfully.", data: await sanitizeTreatmentRecord(record) });
   } catch (error) {
     next(error);
   }
@@ -2179,7 +2372,7 @@ router.get("/dentalrecords/my", authorize("patient"), async (req, res, next) => 
     });
 
     res.json({
-      data: records.map(sanitizePatientDentalRecord),
+      data: await Promise.all(records.map(sanitizePatientDentalRecord)),
       appointments: appointments.map((appointment) => ({
         ...(appointment.toObject ? appointment.toObject() : appointment),
         clinicalRecommendation: recommendationsByAppointment.get(String(appointment._id)) || "",

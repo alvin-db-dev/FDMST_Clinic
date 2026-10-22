@@ -124,6 +124,10 @@ const dentalRecordSchema = new mongoose.Schema(
         type: Date,
         default: Date.now,
       },
+      url: {
+        type: String,
+        trim: true,
+      },
     }],
     clinicalFollowUp: {
       enabled: {
@@ -152,6 +156,46 @@ const dentalRecordSchema = new mongoose.Schema(
         trim: true,
       },
     },
+    treatmentPlan: {
+      enabled: {
+        type: Boolean,
+        default: false,
+      },
+      title: {
+        type: String,
+        trim: true,
+      },
+      notes: {
+        type: String,
+        trim: true,
+      },
+      steps: [
+        {
+          stepNumber: {
+            type: Number,
+            default: 1,
+          },
+          procedure: {
+            type: String,
+            trim: true,
+          },
+          targetDate: Date,
+          toothNumber: {
+            type: String,
+            trim: true,
+          },
+          notes: {
+            type: String,
+            trim: true,
+          },
+          status: {
+            type: String,
+            enum: ["pending", "scheduled", "completed"],
+            default: "pending",
+          },
+        },
+      ],
+    },
     procedure: {
       type: String,
       trim: true,
@@ -159,6 +203,11 @@ const dentalRecordSchema = new mongoose.Schema(
     toothNumber: {
       type: String,
       trim: true,
+    },
+    toothColorMap: {
+      type: Map,
+      of: String,
+      default: {},
     },
     medications: [String],
     dentistName: {

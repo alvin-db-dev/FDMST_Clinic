@@ -13,6 +13,7 @@ import {
   FaSearch,
   FaShieldAlt,
   FaTimes,
+  FaTooth,
   FaUser,
   FaUserMd,
   FaUsers,
@@ -20,6 +21,7 @@ import {
 } from 'react-icons/fa'
 import { fdmstApi } from '../../api/fdmstApi.js'
 import { inputClass } from '../../components/AdminUi.jsx'
+import DentalChart from '../../components/DentalChart.jsx'
 import PasswordField from '../../components/PasswordField.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 import { digitsOnly, validateMobileNumber } from '../../utils/validation.js'
@@ -160,6 +162,7 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   const [isConfirming, setIsConfirming] = useState(false)
   const [adminPassword, setAdminPassword] = useState('')
   const [confirmation, setConfirmation] = useState(initialConfirmation)
+  const [selectedRecord, setSelectedRecord] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [isDrawerOpen, setIsDrawerOpen] = useState(quickCreate)
 
@@ -168,7 +171,7 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
       const [patientResponse, appointmentResponse, recordResponse, dentistResponse] = await Promise.all([
         fdmstApi.list('patients'),
         fdmstApi.getAppointments(),
-        fdmstApi.list('dentalrecords'),
+        fdmstApi.list('dentalrecords?limit=100'),
         fdmstApi.getClinicDentist(),
       ])
       setPatients(patientResponse.data || [])
@@ -227,9 +230,53 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   const selectedRecords = useMemo(
     () => records.filter((record) => {
       if (!selectedPatient) return false
-      return record.patient === selectedPatient.id || record.patient === selectedPatient._id || record.patientName === fullName(selectedPatient)
+      const patientId = String(record.patient?._id || record.patient?.id || record.patient || '')
+      const targetId = String(selectedPatient._id || selectedPatient.id || '')
+      const pName = fullName(selectedPatient).trim().toLowerCase()
+      const rName = (record.patientName || '').trim().toLowerCase()
+      return (patientId && targetId && patientId === targetId) || (pName && rName && pName === rName)
     }),
     [records, selectedPatient],
+  )
+
+  useEffect(() => {
+    setSelectedRecord(null)
+    if (!selectedPatient?._id && !selectedPatient?.id) return
+    let isMounted = true
+    const patientId = selectedPatient._id || selectedPatient.id
+    fdmstApi.getTreatmentRecords({ patient: patientId, limit: 100 })
+      .then((res) => {
+        if (!isMounted || !res?.data) return
+        setRecords((prev) => {
+          const map = new Map(prev.map((r) => [String(r._id || r.id), r]))
+          res.data.forEach((r) => {
+            const id = String(r._id || r.id)
+            map.set(id, { ...map.get(id), ...r, _id: r._id || r.id })
+          })
+          return Array.from(map.values())
+        })
+      })
+      .catch(() => {})
+    return () => {
+      isMounted = false
+    }
+  }, [selectedPatient])
+
+  const combinedPatientToothColors = useMemo(() => {
+    const combined = {}
+    selectedRecords.forEach((record) => {
+      if (record.recordType === 'clinical_note') return
+      const map = record.toothColorMap instanceof Map
+        ? Object.fromEntries(record.toothColorMap)
+        : (record.toothColorMap || {})
+      Object.assign(combined, map)
+    })
+    return combined
+  }, [selectedRecords])
+
+  const patientTreatments = useMemo(
+    () => selectedRecords.filter((item) => item.recordType !== 'clinical_note'),
+    [selectedRecords],
   )
 
   const resetForm = () => {
@@ -556,10 +603,151 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                   <p>Registered: {formatDateTime(selectedPatient.createdAt)}</p>
                 </div>
               </section>
-              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2"><h3 className="font-semibold text-sky-950">Medical / Dental History</h3><p className="mt-3 text-sm text-slate-600">{selectedPatient.allergies?.length ? `Allergies: ${selectedPatient.allergies.join(', ')}` : 'No allergies recorded.'}</p><p className="mt-2 text-sm text-slate-600">{selectedPatient.medicalConditions ? `Medical Conditions: ${selectedPatient.medicalConditions}` : 'No medical conditions recorded.'}</p><p className="mt-2 text-sm text-slate-600">{selectedPatient.emergencyContact || selectedPatient.emergencyContactName || selectedPatient.emergencyContactNumber ? `Emergency Contact: ${[selectedPatient.emergencyContact, selectedPatient.emergencyContactName, selectedPatient.emergencyContactNumber].filter(Boolean).join(' • ')}` : 'No emergency contact recorded.'}</p><p className="mt-2 text-sm text-slate-600">{selectedPatient.medicalHistory || 'No medical history recorded.'}</p><p className="mt-2 text-sm text-slate-600">{selectedPatient.dentalHistory || 'No dental history recorded.'}</p></section>
+              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
+                {selectedRecord ? (
+                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
+                    <div className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-950 text-white">
+                        <FaTooth className="h-4 w-4" />
+                      </span>
+                      <div>
+                        <p className="text-sm font-bold text-sky-950">
+                          Viewing treatment from {selectedRecord.visitDate ? new Date(selectedRecord.visitDate).toLocaleDateString() : '—'}
+                        </p>
+                        <p className="text-xs text-slate-500">
+                          {selectedRecord.procedure || selectedRecord.treatment || selectedRecord.servicePerformed || 'Treatment'} • {selectedRecord.dentistName || selectedRecord.createdByName || 'No dentist listed'}
+                          {selectedRecord.toothNumber ? ` • Tooth #${selectedRecord.toothNumber}` : ''}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRecord(null)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 hover:text-sky-950"
+                    >
+                      <FaTimes className="h-3 w-3" /> Show All Records
+                    </button>
+                  </div>
+                ) : null}
+                <DentalChart
+                  records={selectedRecord ? [selectedRecord] : selectedRecords}
+                  selectedTooth={selectedRecord ? (selectedRecord.toothNumber || '') : ''}
+                  initialToothColors={
+                    selectedRecord
+                      ? (selectedRecord.toothColorMap instanceof Map
+                          ? Object.fromEntries(selectedRecord.toothColorMap)
+                          : (selectedRecord.toothColorMap || {}))
+                      : combinedPatientToothColors
+                  }
+                  interactive={false}
+                  title={
+                    selectedRecord
+                      ? `Dental Diagram — ${fullName(selectedPatient)} (${selectedRecord.visitDate ? new Date(selectedRecord.visitDate).toLocaleDateString() : 'Record'})`
+                      : `Dental Odontogram — ${fullName(selectedPatient)}`
+                  }
+                />
+              </section>
               <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Appointment History</h3>{selectedAppointments.length ? selectedAppointments.map((item) => <p key={item.id} className="mt-2 text-sm text-slate-600">{new Date(item.appointmentDate).toLocaleDateString()} • {item.service} • {item.status}</p>) : <p className="mt-3 text-sm text-slate-500">No appointments found.</p>}</section>
               <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Clinical Notes</h3>{selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).length ? selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).map((item) => <p key={item._id} className="mt-2 text-sm text-slate-600">{new Date(item.visitDate || item.createdAt).toLocaleDateString()} • {item.noteType || 'Clinical Note'} • {item.createdByName || item.dentistName || 'Provider'}</p>) : <p className="mt-3 text-sm text-slate-500">No clinical notes found.</p>}</section>
-              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2"><h3 className="font-semibold text-sky-950">Treatment Records</h3>{selectedRecords.length ? selectedRecords.filter((item) => item.recordType !== 'clinical_note').map((item) => <p key={item._id} className="mt-2 text-sm text-slate-600">{new Date(item.visitDate).toLocaleDateString()} • {item.procedure || item.treatment || 'Treatment'} • {item.dentistName || 'No dentist listed'}</p>) : <p className="mt-3 text-sm text-slate-500">No dental records found.</p>}</section>
+              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200/80 pb-3">
+                  <div>
+                    <h3 className="font-semibold text-sky-950">Treatment Records</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">
+                      Click any record below to show its treated teeth and diagram colors on the chart above.
+                    </p>
+                  </div>
+                  {selectedRecord ? (
+                    <button
+                      type="button"
+                      onClick={() => setSelectedRecord(null)}
+                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
+                    >
+                      <FaTimes className="h-3 w-3" /> Reset View
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="mt-3 grid gap-2.5">
+                  {patientTreatments.length ? (
+                    patientTreatments.map((item) => {
+                      const isActive = (selectedRecord?._id && selectedRecord._id === item._id) || (selectedRecord?.id && selectedRecord.id === item.id)
+                      const dateStr = item.visitDate ? new Date(item.visitDate).toLocaleDateString() : (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—')
+                      const procedureStr = item.procedure || item.treatment || item.servicePerformed || 'Treatment'
+                      const dentistStr = item.dentistName || item.createdByName || 'No dentist listed'
+
+                      return (
+                        <div
+                          key={item._id || item.id}
+                          onClick={() => setSelectedRecord(isActive ? null : item)}
+                          className={`group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 transition cursor-pointer ${
+                            isActive
+                              ? 'border-sky-500 bg-sky-50/90 ring-2 ring-sky-300 shadow-xs'
+                              : 'border-slate-200 bg-white hover:border-sky-300 hover:bg-slate-50/80'
+                          }`}
+                        >
+                          <div className="flex items-start sm:items-center gap-3">
+                            <span
+                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
+                                isActive
+                                  ? 'bg-sky-950 text-white shadow-xs'
+                                  : 'bg-slate-100 text-slate-500 group-hover:bg-sky-100 group-hover:text-sky-900'
+                              }`}
+                            >
+                              <FaTooth className="h-4 w-4" />
+                            </span>
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-sm font-bold text-sky-950">{dateStr}</span>
+                                <span className="text-slate-300">•</span>
+                                <span className="text-sm font-semibold text-slate-800">{procedureStr}</span>
+                                {item.treatmentStatus ? (
+                                  <span className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    item.treatmentStatus === 'completed'
+                                      ? 'bg-emerald-50 text-emerald-700 ring-1 ring-emerald-100'
+                                      : 'bg-amber-50 text-amber-700 ring-1 ring-amber-100'
+                                  }`}>
+                                    {item.treatmentStatus.replaceAll('_', ' ')}
+                                  </span>
+                                ) : null}
+                              </div>
+                              <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-slate-500">
+                                <span>Dentist: {dentistStr}</span>
+                                {item.toothNumber ? (
+                                  <>
+                                    <span>•</span>
+                                    <span className="font-semibold text-sky-900">Teeth: #{item.toothNumber}</span>
+                                  </>
+                                ) : null}
+                                {item.materialsUsed ? (
+                                  <>
+                                    <span>•</span>
+                                    <span>Materials: {item.materialsUsed}</span>
+                                  </>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
+                            {isActive ? (
+                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-sky-950 px-3 py-1.5 text-xs font-bold text-white shadow-xs">
+                                <FaEye className="h-3 w-3" /> Showing on Diagram
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition group-hover:border-sky-300 group-hover:bg-sky-50 group-hover:text-sky-950">
+                                <FaEye className="h-3 w-3 text-slate-400 group-hover:text-sky-700" /> View on Diagram
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })
+                  ) : (
+                    <p className="mt-2 text-sm text-slate-500">No dental records found.</p>
+                  )}
+                </div>
+              </section>
             </div>
           </div>
         </div>

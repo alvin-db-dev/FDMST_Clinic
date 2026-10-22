@@ -1525,7 +1525,46 @@ router.get(
       return res.status(404).json({ message: "Appointment not found." });
     }
 
-    res.json({ appointment: sanitizeAppointment(appointment) });
+    const treatmentRecord = await DentalRecord.findOne({
+      appointment: appointment._id,
+      recordType: "treatment_record",
+    }).lean();
+
+    if (treatmentRecord && appointment.status !== "completed") {
+      appointment.status = "completed";
+      appointment.completedAt = appointment.completedAt || treatmentRecord.visitDate || new Date();
+      await Appointment.updateOne(
+        { _id: appointment._id, status: { $ne: "completed" } },
+        { $set: { status: "completed", completedAt: appointment.completedAt } }
+      );
+    }
+
+    const sanitized = sanitizeAppointment(appointment);
+    sanitized.hasTreatmentRecord = Boolean(treatmentRecord);
+    sanitized.treatmentRecordId = treatmentRecord ? treatmentRecord._id : null;
+    sanitized.treatmentRecord = treatmentRecord
+      ? {
+          id: treatmentRecord._id,
+          patientName: treatmentRecord.patientName,
+          patient: treatmentRecord.patient,
+          appointment: treatmentRecord.appointment,
+          visitDate: treatmentRecord.visitDate,
+          procedure: treatmentRecord.procedure || treatmentRecord.servicePerformed || treatmentRecord.treatment,
+          servicePerformed: treatmentRecord.servicePerformed,
+          toothNumber: treatmentRecord.toothNumber,
+          toothColorMap: treatmentRecord.toothColorMap instanceof Map ? Object.fromEntries(treatmentRecord.toothColorMap) : (treatmentRecord.toothColorMap || {}),
+          diagnosis: treatmentRecord.diagnosis,
+          treatmentPerformed: treatmentRecord.treatmentPerformed || treatmentRecord.treatment,
+          materialsUsed: treatmentRecord.materialsUsed,
+          treatmentStatus: treatmentRecord.treatmentStatus || "completed",
+          recommendations: treatmentRecord.recommendations || treatmentRecord.nextVisitRecommendation,
+          notes: treatmentRecord.notes,
+          dentistName: treatmentRecord.dentistName,
+          createdByName: treatmentRecord.createdByName,
+        }
+      : null;
+
+    res.json({ appointment: sanitized });
   }),
 );
 
@@ -2011,9 +2050,70 @@ router.get(
     const currentPage = Math.min(page, totalPages);
     const skip = (currentPage - 1) * limit;
     const appointments = sortedAppointments.slice(skip, skip + limit);
+    const appointmentIds = appointments.map((appointment) => appointment._id).filter(Boolean);
+    const treatmentRecords = appointmentIds.length
+      ? await DentalRecord.find({
+          appointment: { $in: appointmentIds },
+          recordType: "treatment_record",
+        }).lean()
+      : [];
+    const treatmentRecordMap = new Map();
+    treatmentRecords.forEach((record) => {
+      if (record.appointment) {
+        treatmentRecordMap.set(String(record.appointment), record);
+      }
+    });
+
+    const uncompletedWithTreatment = [];
+    appointments.forEach((appointment) => {
+      if (treatmentRecordMap.has(String(appointment._id)) && appointment.status !== "completed") {
+        uncompletedWithTreatment.push(appointment._id);
+        appointment.status = "completed";
+        appointment.completedAt = appointment.completedAt || treatmentRecordMap.get(String(appointment._id))?.visitDate || new Date();
+      }
+    });
+
+    if (uncompletedWithTreatment.length) {
+      Appointment.updateMany(
+        { _id: { $in: uncompletedWithTreatment }, status: { $ne: "completed" } },
+        { $set: { status: "completed", completedAt: new Date() } }
+      ).catch((err) => console.warn("Failed to batch update appointments to completed:", err));
+    }
+
+    const data = appointments.map((appointment) => {
+      const sanitized = sanitizeAppointment(appointment);
+      const treatmentRecord = treatmentRecordMap.get(String(appointment._id));
+      sanitized.hasTreatmentRecord = Boolean(treatmentRecord);
+      if (treatmentRecord && sanitized.status !== "completed") {
+        sanitized.status = "completed";
+      }
+      sanitized.treatmentRecordId = treatmentRecord ? treatmentRecord._id : null;
+      sanitized.treatmentRecord = treatmentRecord
+        ? {
+            id: treatmentRecord._id,
+            patientName: treatmentRecord.patientName,
+            patient: treatmentRecord.patient,
+            appointment: treatmentRecord.appointment,
+            visitDate: treatmentRecord.visitDate,
+            procedure: treatmentRecord.procedure || treatmentRecord.servicePerformed || treatmentRecord.treatment,
+            servicePerformed: treatmentRecord.servicePerformed,
+            toothNumber: treatmentRecord.toothNumber,
+            toothColorMap: treatmentRecord.toothColorMap instanceof Map ? Object.fromEntries(treatmentRecord.toothColorMap) : (treatmentRecord.toothColorMap || {}),
+            diagnosis: treatmentRecord.diagnosis,
+            treatmentPerformed: treatmentRecord.treatmentPerformed || treatmentRecord.treatment,
+            materialsUsed: treatmentRecord.materialsUsed,
+            treatmentStatus: treatmentRecord.treatmentStatus || "completed",
+            recommendations: treatmentRecord.recommendations || treatmentRecord.nextVisitRecommendation,
+            notes: treatmentRecord.notes,
+            dentistName: treatmentRecord.dentistName,
+            createdByName: treatmentRecord.createdByName,
+          }
+        : null;
+      return sanitized;
+    });
 
     res.json({
-      data: appointments.map(sanitizeAppointment),
+      data,
       pagination: {
         page: currentPage,
         limit,
@@ -2026,5 +2126,28 @@ router.get(
     });
   }),
 );
+
+const syncAppointmentsWithTreatmentRecords = async () => {
+  try {
+    const treatmentRecords = await DentalRecord.find({
+      recordType: "treatment_record",
+      appointment: { $exists: true, $ne: null },
+    }).select("appointment visitDate").lean();
+
+    const appointmentIds = treatmentRecords.map((r) => r.appointment).filter(Boolean);
+    if (appointmentIds.length) {
+      await Appointment.updateMany(
+        { _id: { $in: appointmentIds }, status: { $ne: "completed" } },
+        { $set: { status: "completed" } }
+      );
+    }
+  } catch (err) {
+    console.warn("Unable to sync treatment record appointment statuses:", err);
+  }
+};
+
+syncAppointmentsWithTreatmentRecords();
+
+router.syncAppointmentsWithTreatmentRecords = syncAppointmentsWithTreatmentRecords;
 
 module.exports = router;

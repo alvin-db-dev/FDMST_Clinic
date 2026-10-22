@@ -25,13 +25,18 @@ const seedAdmin = async () => {
   }
 
   const existingAdmin = await User.findOne({ email: adminEmail });
+  const passwordHash = await hashPasswordBcrypt(adminPassword);
 
   if (existingAdmin) {
-    console.log(`Admin account already exists for ${adminEmail}.`);
+    existingAdmin.passwordHash = passwordHash;
+    existingAdmin.role = "admin";
+    existingAdmin.accountStatus = "active_admin";
+    existingAdmin.status = "active";
+    existingAdmin.failedLoginAttempts = 0;
+    await existingAdmin.save();
+    console.log(`Admin account credentials updated for ${adminEmail}.`);
     return existingAdmin;
   }
-
-  const passwordHash = await hashPasswordBcrypt(adminPassword);
 
   const admin = await User.create({
     firstName: String(process.env.ADMIN_SEED_FIRST_NAME || "Clinic").trim(),

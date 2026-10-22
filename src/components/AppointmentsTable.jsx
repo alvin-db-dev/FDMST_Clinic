@@ -1,3 +1,4 @@
+import { FaFileInvoiceDollar } from 'react-icons/fa'
 import { formatDate, formatStatus } from '../utils/auth.js'
 
 const statusStyles = {
@@ -21,6 +22,7 @@ const actionClass = {
 }
 
 function StatusActions({ appointment, onUpdateStatus, onRowClick, updatingId }) {
+  const currentStatus = appointment.hasTreatmentRecord ? 'completed' : appointment.status
   const scheduledDate = appointment.appointmentDate ? new Date(appointment.appointmentDate) : null
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -48,7 +50,7 @@ function StatusActions({ appointment, onUpdateStatus, onRowClick, updatingId }) 
       ['rescheduled', 'Skip', 'warning'],
     ],
   }
-  const actions = (actionsByStatus[appointment.status] || []).filter(([nextStatus]) => {
+  const actions = (actionsByStatus[currentStatus] || []).filter(([nextStatus]) => {
     if (isFutureDate && ['checked_in', 'no_show', 'rescheduled'].includes(nextStatus)) return false
     return true
   })
@@ -89,6 +91,8 @@ function AppointmentsTable({
   showActions = false,
   onUpdateStatus,
   onRowClick,
+  onReceiptClick,
+  onRecordTreatment,
   updatingId = null,
 }) {
   if (!appointments?.length) {
@@ -115,7 +119,9 @@ function AppointmentsTable({
           </tr>
         </thead>
         <tbody>
-          {appointments.map((appointment) => (
+          {appointments.map((appointment) => {
+            const effectiveStatus = appointment.hasTreatmentRecord ? 'completed' : appointment.status
+            return (
             <tr
               key={appointment.id}
               onClick={() => onRowClick?.(appointment)}
@@ -130,19 +136,29 @@ function AppointmentsTable({
               <td className="px-4 py-3">
                 <span
                   className={`whitespace-nowrap rounded-full px-3 py-1 text-xs font-semibold ${
-                    statusStyles[appointment.status] || 'bg-slate-100 text-slate-600'
+                    statusStyles[effectiveStatus] || 'bg-slate-100 text-slate-600'
                   }`}
                 >
-                  {formatStatus(appointment.status)}
+                  {formatStatus(effectiveStatus)}
                 </span>
               </td>
               {showActions && (
                 <td className="px-4 py-3" onClick={(event) => event.stopPropagation()}>
-                  <StatusActions appointment={appointment} onUpdateStatus={onUpdateStatus} onRowClick={onRowClick} updatingId={updatingId} />
+                  <div className="flex flex-wrap items-center gap-2">
+                    <StatusActions appointment={appointment} onUpdateStatus={onUpdateStatus} onRowClick={onRowClick} updatingId={updatingId} />
+                    <button
+                      type="button"
+                      onClick={() => onReceiptClick?.(appointment)}
+                      className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-slate-300 hover:text-sky-950 shadow-xs"
+                      title="View & Print Official Receipt"
+                    >
+                      <FaFileInvoiceDollar className="text-emerald-600" /> Receipt
+                    </button>
+                  </div>
                 </td>
               )}
             </tr>
-          ))}
+          )})}
         </tbody>
       </table>
     </div>

@@ -4,6 +4,7 @@ import {
   FaCalendarCheck,
   FaCheckCircle,
   FaClock,
+  FaFileInvoiceDollar,
   FaFileMedical,
   FaGift,
   FaRegCalendarAlt,
@@ -12,6 +13,7 @@ import {
   FaTooth,
 } from 'react-icons/fa'
 import { AUTH_CHANGED_EVENT, authStorage, fdmstApi } from '../../api/fdmstApi.js'
+import AppointmentReceiptModal from '../../components/AppointmentReceiptModal.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 import { formatDate, formatStatus } from '../../utils/auth.js'
 import { addDaysToDateKey, clinicDateKey } from '../../utils/clinicTime.js'
@@ -273,6 +275,7 @@ function PatientLandingPage() {
   const [rescheduleForm, setRescheduleForm] = useState({ date: '', time: '' })
   const [availableRescheduleSlots, setAvailableRescheduleSlots] = useState([])
   const [rescheduleMessage, setRescheduleMessage] = useState('')
+  const [receiptAppointment, setReceiptAppointment] = useState(null)
   const [isLoadingRescheduleSlots, setIsLoadingRescheduleSlots] = useState(false)
   const [isLoading, setIsLoading] = useState(true)
   const [now, setNow] = useState(() => new Date())
@@ -627,6 +630,15 @@ function PatientLandingPage() {
               </section>
             ) : null}
             <AppointmentTimeline appointment={selectedAppointment} />
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setReceiptAppointment(selectedAppointment)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 py-2 text-xs font-bold text-sky-950 shadow-xs transition hover:bg-sky-50 hover:border-sky-300"
+              >
+                <FaFileInvoiceDollar className="text-emerald-600" /> View Official Receipt
+              </button>
+            </div>
             <div className="mt-5 rounded-2xl border border-slate-200 bg-slate-50 p-4">
               {selectedAppointment.status === 'pending' ? (
                 <div className="space-y-4">
@@ -713,6 +725,13 @@ function PatientLandingPage() {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {receiptAppointment ? (
+        <AppointmentReceiptModal
+          appointment={receiptAppointment}
+          onClose={() => setReceiptAppointment(null)}
+        />
       ) : null}
     </main>
   )

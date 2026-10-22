@@ -29,6 +29,7 @@ function ForgotPasswordPage() {
     confirmPassword: '',
   })
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [devOtp, setDevOtp] = useState('')
   const [otpExpiresAt, setOtpExpiresAt] = useState('')
   const [resendAvailableAt, setResendAvailableAt] = useState('')
   const [otpSecondsRemaining, setOtpSecondsRemaining] = useState(0)
@@ -71,7 +72,13 @@ function ForgotPasswordPage() {
       const response = await fdmstApi.requestPasswordResetOtp({ email: form.email.trim() })
       setOtpExpiresAt(response.otpExpiresAt || '')
       setResendAvailableAt(response.resendAvailableAt || '')
-      toast.success(response.message || 'Password reset code sent.')
+      if (response.devOtp) {
+        setForm((prev) => ({ ...prev, otp: response.devOtp }))
+        setDevOtp(response.devOtp)
+        toast.success(`Password reset code generated. (Dev OTP: ${response.devOtp})`)
+      } else {
+        toast.success(response.message || 'Password reset code sent.')
+      }
       setStep('reset')
     } catch (error) {
       if (error.otpExpiresAt) setOtpExpiresAt(error.otpExpiresAt)
@@ -161,6 +168,11 @@ function ForgotPasswordPage() {
                 <span className="text-red-600">OTP has expired. Please request a new code.</span>
               )}
             </div>
+            {devOtp ? (
+              <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 text-left">
+                <span className="font-semibold">Development Code:</span> <code className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-sm font-bold tracking-widest text-amber-950">{devOtp}</code> (auto-filled)
+              </div>
+            ) : null}
             <PasswordField inputClassName={inputClass} label="New Password" name="newPassword" value={form.newPassword} onChange={update} autoComplete="new-password" />
             <PasswordField inputClassName={inputClass} label="Confirm New Password" name="confirmPassword" value={form.confirmPassword} onChange={update} autoComplete="new-password" />
             <button type="submit" disabled={isSubmitting} className="h-14 rounded-2xl bg-sky-950 px-8 text-base font-semibold text-white shadow-lg shadow-sky-950/15 transition hover:-translate-y-0.5 hover:bg-slate-900 focus:outline-none focus:ring-4 focus:ring-sky-100 disabled:opacity-60">

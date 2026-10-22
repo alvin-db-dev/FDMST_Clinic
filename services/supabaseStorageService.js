@@ -1,8 +1,10 @@
 const crypto = require("crypto");
+const fs = require("fs");
 const path = require("path");
 const dotenv = require("dotenv");
 
 const loadedEnv = dotenv.config({ path: path.resolve(__dirname, "../.env"), quiet: true }).parsed || {};
+const LOCAL_CLINICAL_DIR = path.resolve(__dirname, "../uploads/clinical-files");
 
 const DATA_URL_PATTERN = /^data:(image\/(?:png|jpe?g|webp|gif));base64,([A-Za-z0-9+/=]+)$/i;
 const CLINICAL_FILE_DATA_URL_PATTERN = /^data:(image\/(?:png|jpe?g|webp)|application\/pdf);base64,([A-Za-z0-9+/=]+)$/i;
@@ -220,9 +222,14 @@ const uploadImageToSupabase = async ({ imageData, folder, fileName, maxSizeBytes
   };
 };
 
+const isPlaceholderSupabaseConfig = (config) => {
+  const url = String(config?.url || "").toLowerCase();
+  const key = String(config?.key || "").toLowerCase();
+  return !url || !key || url.includes("your-project-ref") || url.includes("example.com") || key.includes("replace-with") || key.includes("your-supabase");
+};
+
 const uploadClinicalFileToSupabase = async ({ fileData, fileName, maxSizeBytes = 5 * 1024 * 1024 }) => {
   const config = getClinicalStorageConfig();
-  ensureConfigured(config);
   const parsed = parseClinicalFileDataUrl(fileData);
 
   if (parsed.buffer.length > maxSizeBytes) {
@@ -237,13 +244,39 @@ const uploadClinicalFileToSupabase = async ({ fileData, fileName, maxSizeBytes =
     `${Date.now()}-${crypto.randomBytes(12).toString("hex")}-${sanitizeBaseName(fileName || "attachment")}.${parsed.extension}`,
   ].join("/");
 
-  try {
-    await uploadObject({ config, storagePath, parsed });
-  } catch (error) {
-    if (!isMissingBucketError(error.details || error.message)) throw error;
-    await createStorageBucket(config, false);
-    await uploadObject({ config, storagePath, parsed });
+  if (!isPlaceholderSupabaseConfig(config)) {
+    try {
+      await uploadObject({ config, storagePath, parsed });
+      return {
+        path: storagePath,
+        bucket: config.bucket,
+        mimeType: parsed.mimeType,
+        size: parsed.buffer.length,
+        name: String(fileName || `attachment.${parsed.extension}`).slice(0, 180),
+      };
+    } catch (error) {
+      if (isMissingBucketError(error.details || error.message)) {
+        await createStorageBucket(config, false);
+        await uploadObject({ config, storagePath, parsed });
+        return {
+          path: storagePath,
+          bucket: config.bucket,
+          mimeType: parsed.mimeType,
+          size: parsed.buffer.length,
+          name: String(fileName || `attachment.${parsed.extension}`).slice(0, 180),
+        };
+      }
+      console.warn("Supabase storage upload failed, saving to clinic local storage:", error.message);
+    }
   }
+
+  // Local filesystem fallback for dev or offline mode
+  const fullFilePath = path.join(LOCAL_CLINICAL_DIR, storagePath);
+  const targetDir = path.dirname(fullFilePath);
+  if (!fs.existsSync(targetDir)) {
+    fs.mkdirSync(targetDir, { recursive: true });
+  }
+  fs.writeFileSync(fullFilePath, parsed.buffer);
 
   return {
     path: storagePath,
@@ -334,31 +367,55 @@ const isManagedClinicalFile = (attachment) => {
 const createClinicalFileSignedUrl = async (attachment, expiresIn = 900) => {
   if (!isManagedClinicalFile(attachment)) return "";
   const config = getClinicalStorageConfig();
-  ensureConfigured(config);
-  const response = await fetch(`${config.url}/storage/v1/object/sign/${encodeURIComponent(config.bucket)}/${encodeStoragePath(attachment.path)}`, {
-    method: "POST",
-    headers: getSupabaseHeaders(config, { "Content-Type": "application/json" }),
-    body: JSON.stringify({ expiresIn }),
-  });
 
-  if (!response.ok) return "";
-  const data = await response.json();
-  const signedUrl = data.signedURL || data.signedUrl || "";
-  if (!signedUrl) return "";
-  if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
-  return `${config.url}/storage/v1${signedUrl.startsWith("/") ? signedUrl : `/${signedUrl}`}`;
+  if (!isPlaceholderSupabaseConfig(config)) {
+    try {
+      const response = await fetch(`${config.url}/storage/v1/object/sign/${encodeURIComponent(config.bucket)}/${encodeStoragePath(attachment.path)}`, {
+        method: "POST",
+        headers: getSupabaseHeaders(config, { "Content-Type": "application/json" }),
+        body: JSON.stringify({ expiresIn }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const signedUrl = data.signedURL || data.signedUrl || "";
+        if (signedUrl) {
+          if (/^https?:\/\//i.test(signedUrl)) return signedUrl;
+          return `${config.url}/storage/v1${signedUrl.startsWith("/") ? signedUrl : `/${signedUrl}`}`;
+        }
+      }
+    } catch {
+      // Supabase fetch failed or network offline, proceed to local check
+    }
+  }
+
+  const localFile = path.join(LOCAL_CLINICAL_DIR, attachment.path);
+  if (fs.existsSync(localFile)) {
+    return `/api/uploads/clinical-file-view?path=${encodeURIComponent(attachment.path)}`;
+  }
+  return `/api/uploads/clinical-file-view?path=${encodeURIComponent(attachment.path)}`;
 };
 
 const deleteClinicalFile = async (attachment) => {
   if (!isManagedClinicalFile(attachment)) return false;
   const config = getClinicalStorageConfig();
-  ensureConfigured(config);
-  const response = await fetch(`${config.url}/storage/v1/object/${encodeURIComponent(config.bucket)}/${encodeStoragePath(attachment.path)}`, {
-    method: "DELETE",
-    headers: getSupabaseHeaders(config),
-  });
-  if (response.ok || response.status === 404) return true;
-  throw new Error(`Unable to remove clinical attachment (HTTP ${response.status}).`);
+
+  try {
+    const localFile = path.join(LOCAL_CLINICAL_DIR, attachment.path);
+    if (fs.existsSync(localFile)) {
+      fs.unlinkSync(localFile);
+    }
+  } catch {}
+
+  if (!isPlaceholderSupabaseConfig(config)) {
+    const response = await fetch(`${config.url}/storage/v1/object/${encodeURIComponent(config.bucket)}/${encodeStoragePath(attachment.path)}`, {
+      method: "DELETE",
+      headers: getSupabaseHeaders(config),
+    });
+    if (response.ok || response.status === 404) return true;
+    throw new Error(`Unable to remove clinical attachment (HTTP ${response.status}).`);
+  }
+  return true;
 };
 
 const getManagedPromotionImagePath = (imageUrl, config = getSupabaseConfig()) => {
@@ -405,4 +462,5 @@ module.exports = {
   isManagedChatFile,
   deleteManagedPromotionImage,
   getManagedPromotionImagePath,
+  LOCAL_CLINICAL_DIR,
 };

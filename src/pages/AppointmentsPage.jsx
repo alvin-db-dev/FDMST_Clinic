@@ -3,18 +3,23 @@ import { useLocation } from 'react-router-dom'
 import {
   FaCalendarAlt,
   FaCheckCircle,
+  FaFileInvoiceDollar,
   FaRegCalendarAlt,
   FaSearch,
   FaTimes,
+  FaTooth,
   FaUserCheck,
   FaUserClock,
   FaUserTimes,
 } from 'react-icons/fa'
 import { authStorage, fdmstApi } from '../api/fdmstApi.js'
 import { inputClass } from '../components/AdminUi.jsx'
+import AppointmentReceiptModal from '../components/AppointmentReceiptModal.jsx'
 import AppointmentsTable from '../components/AppointmentsTable.jsx'
+import DentalChart from '../components/DentalChart.jsx'
 import { useToast } from '../context/ToastContext.jsx'
 import { formatDate, formatStatus } from '../utils/auth.js'
+import { RecordModal, emptyForm as emptyTreatmentForm, toForm as toTreatmentForm } from './staff/StaffTreatmentRecordsPage.jsx'
 
 const statusBadgeClass = {
   pending: 'bg-amber-50 text-amber-700 ring-amber-100',
@@ -45,7 +50,7 @@ const calendarStatusStyles = {
 const calendarLegend = [
   ['pending', '🟡 Pending'],
   ['confirmed', '🔵 Confirmed'],
-  ['follow_up', '🩵 Follow Up'],
+  ['follow_up', '🩵 Return Appointment'],
   ['checked_in', '🟢 Checked In'],
   ['in_consultation', '🟣 In Consultation'],
   ['completed', '✅ Completed'],
@@ -112,7 +117,7 @@ function formatRecordStatus(value, fallback = 'completed') {
 }
 
 function formatAppointmentStatusLabel(status) {
-  return status === 'follow_up' ? 'Confirmed / Follow Up' : formatStatus(status)
+  return status === 'follow_up' ? 'Confirmed / Return Appointment' : formatStatus(status)
 }
 
 function formatAppointmentId(appointment) {
@@ -223,6 +228,107 @@ function AppointmentsPage({ allowApproval = false }) {
   const [followUpSlots, setFollowUpSlots] = useState([])
   const [followUpAvailabilityMessage, setFollowUpAvailabilityMessage] = useState('')
   const [isLoadingFollowUpSlots, setIsLoadingFollowUpSlots] = useState(false)
+  const [receiptAppointment, setReceiptAppointment] = useState(null)
+  const [treatmentModal, setTreatmentModal] = useState(null)
+  const [treatmentForm, setTreatmentForm] = useState(emptyTreatmentForm)
+  const [isSavingTreatment, setIsSavingTreatment] = useState(false)
+
+  const openTreatmentModal = async (appointment) => {
+    if (!appointment) return
+
+    let existingRecord = appointment.treatmentRecord
+
+    if (!existingRecord) {
+      try {
+        const response = await fdmstApi.getTreatmentRecords({
+          appointment: appointment.id,
+          scope: 'all',
+          limit: 1,
+        })
+        if (response.data && response.data.length > 0) {
+          existingRecord = response.data[0]
+        }
+      } catch (err) {
+        console.warn('Unable to query existing treatment record:', err)
+      }
+    }
+
+    if (existingRecord) {
+      setTreatmentForm(toTreatmentForm(existingRecord))
+      setTreatmentModal({ mode: 'edit', record: existingRecord })
+    } else {
+      setTreatmentForm({
+        ...emptyTreatmentForm,
+        patientName: appointment.patientName || '',
+        patient: appointment.patientSnapshot?.id || appointment.patient?._id || appointment.patient || '',
+        patientId: appointment.patientSnapshot?.patientId || '',
+        appointment: appointment.id,
+        appointmentDisplay: appointment.appointmentId || `APT-${String(appointment.id).slice(-6).toUpperCase()}`,
+        procedure: appointment.service || '',
+        treatmentStatus: 'completed',
+        visitDate: appointment.appointmentDate ? new Date(appointment.appointmentDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+      })
+      setTreatmentModal({ mode: 'create', record: null })
+    }
+  }
+
+  const saveTreatmentRecord = async (finalData) => {
+    setIsSavingTreatment(true)
+    const payload = finalData && typeof finalData === 'object' && finalData.patientName ? finalData : treatmentForm
+    try {
+      let savedData = null
+      if (treatmentModal?.mode === 'edit' && (treatmentModal?.record?.id || treatmentModal?.record?._id)) {
+        const recordId = treatmentModal.record.id || treatmentModal.record._id
+        const res = await fdmstApi.updateTreatmentRecord(recordId, payload)
+        savedData = res.data
+        toast.success('Treatment record updated successfully.')
+      } else {
+        const res = await fdmstApi.createTreatmentRecord(payload)
+        savedData = res.data
+        toast.success('Treatment record created successfully.')
+      }
+
+      const appointmentId = payload.appointment || treatmentForm.appointment
+      if (appointmentId) {
+        setAppointments((prev) =>
+          prev.map((apt) =>
+            String(apt.id) === String(appointmentId)
+              ? { ...apt, status: 'completed', hasTreatmentRecord: true, treatmentRecord: savedData || apt.treatmentRecord }
+              : apt
+          )
+        )
+        setSelectedAppointment((prev) =>
+          prev && String(prev.id) === String(appointmentId)
+            ? { ...prev, status: 'completed', hasTreatmentRecord: true, treatmentRecord: savedData || prev.treatmentRecord }
+            : prev
+        )
+      }
+
+      setTreatmentModal(null)
+      setTreatmentForm(emptyTreatmentForm)
+      loadAppointments({ silent: true })
+    } catch (error) {
+      if (error.data?.id || error.status === 409) {
+        toast.error('A Treatment Record already exists. Loading existing record...')
+        try {
+          const recordId = error.data?.id
+          if (recordId) {
+            const rec = await fdmstApi.viewTreatmentRecord(recordId)
+            if (rec?.data) {
+              setTreatmentForm(toTreatmentForm(rec.data))
+              setTreatmentModal({ mode: 'edit', record: rec.data })
+              return
+            }
+          }
+        } catch {
+          // ignore
+        }
+      }
+      toast.error(error.message || 'Unable to save treatment record.')
+    } finally {
+      setIsSavingTreatment(false)
+    }
+  }
 
   const loadAppointments = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -730,7 +836,7 @@ function AppointmentsPage({ allowApproval = false }) {
             <option value="all">All Appointments</option>
           </select>
           <select className={`${inputClass} min-w-[14rem] flex-1 xl:flex-none`} value={filters.service} onChange={(event) => updateFilter('service', event.target.value)}><option value="all">All services</option>{serviceOptions.map((service) => <option key={service} value={service}>{service}</option>)}</select>
-          <select className={`${inputClass} min-w-[11rem] flex-1 xl:flex-none`} value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}><option value="all">All statuses</option><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="follow_up">Follow Up</option><option value="checked_in">Checked In</option><option value="in_consultation">In Consultation</option><option value="completed">Completed</option><option value="no_show">No Show</option><option value="cancelled">Cancelled</option><option value="declined">Declined</option><option value="rescheduled">Rescheduled</option></select>
+          <select className={`${inputClass} min-w-[11rem] flex-1 xl:flex-none`} value={filters.status} onChange={(event) => updateFilter('status', event.target.value)}><option value="all">All statuses</option><option value="pending">Pending</option><option value="confirmed">Confirmed</option><option value="follow_up">Return Appointment</option><option value="checked_in">Checked In</option><option value="in_consultation">In Consultation</option><option value="completed">Completed</option><option value="no_show">No Show</option><option value="cancelled">Cancelled</option><option value="declined">Declined</option><option value="rescheduled">Rescheduled</option></select>
           <input className={`${inputClass} min-w-[10.5rem] flex-1 xl:flex-none`} type="date" value={filters.date} onChange={(event) => updateFilter('date', event.target.value)} title="Exact appointment date" />
           <button type="button" onClick={() => { setFilters({ date: '', dentist: 'all', status: 'all', patient: '', search: '', service: 'all', period: 'default', startDate: '', endDate: '' }); setPagination((current) => ({ ...current, page: 1 })) }} className="inline-flex h-12 min-w-[8rem] flex-1 items-center justify-center gap-2 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 transition hover:bg-slate-50 sm:flex-none">
             <FaTimes className="h-4 w-4" />
@@ -752,7 +858,7 @@ function AppointmentsPage({ allowApproval = false }) {
       </section>
 
       {isLoading ? <p className="mt-8 text-sm text-slate-500">Loading appointments...</p> : view === 'table' ? (
-        <AppointmentsTable appointments={appointments} showActions={allowApproval} onUpdateStatus={handleUpdateStatus} onRowClick={openAppointmentDetails} updatingId={updatingId} />
+        <AppointmentsTable appointments={appointments} showActions={allowApproval} onUpdateStatus={handleUpdateStatus} onRowClick={openAppointmentDetails} onReceiptClick={setReceiptAppointment} onRecordTreatment={openTreatmentModal} updatingId={updatingId} />
       ) : (
         <section className="grid gap-5">
           <div className="rounded-[1.75rem] border border-gray-200 bg-white p-4 shadow-sm sm:p-5">
@@ -864,7 +970,7 @@ function AppointmentsPage({ allowApproval = false }) {
                     </span>
                     {appointment.status === 'follow_up' ? (
                       <span className="inline-flex w-fit whitespace-nowrap rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold text-cyan-700 ring-1 ring-cyan-100">
-                        Follow-up appointment
+                        Return appointment
                       </span>
                     ) : null}
                   </button>
@@ -930,7 +1036,7 @@ function AppointmentsPage({ allowApproval = false }) {
                 <p className="mt-1 text-sm text-slate-500">{selectedAppointment.service} • {formatAppointmentDate(selectedAppointment.appointmentDate)} at {selectedAppointment.appointmentTime}</p>
                 {selectedAppointment.status === 'follow_up' ? (
                   <span className="mt-3 inline-flex rounded-full bg-cyan-50 px-3 py-1 text-xs font-bold uppercase tracking-wide text-cyan-700 ring-1 ring-cyan-100">
-                    Follow-up appointment
+                    Return appointment
                   </span>
                 ) : null}
               </div>
@@ -964,7 +1070,7 @@ function AppointmentsPage({ allowApproval = false }) {
                     <p>Dentist: {selectedAppointment.dentistName || 'Any available dentist'}</p>
                     <p>Status: <span className={`ml-1 inline-flex whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold ring-1 ${statusBadgeClass[selectedAppointment.status] || statusBadgeClass.pending}`}>{formatAppointmentStatusLabel(selectedAppointment.status)}</span></p>
                     {selectedAppointment.status === 'follow_up' ? (
-                      <p>Type: <span className="ml-1 font-semibold text-cyan-700">Follow-up appointment</span></p>
+                      <p>Type: <span className="ml-1 font-semibold text-cyan-700">Return appointment</span></p>
                     ) : null}
                   </div>
                 </section>
@@ -985,10 +1091,24 @@ function AppointmentsPage({ allowApproval = false }) {
                 ) : null}
                 <section className="rounded-2xl border border-slate-100 bg-slate-50 p-4 md:order-6 md:col-span-2">
                   <h3 className="font-semibold text-sky-950">Quick Actions</h3>
-                  <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                  <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
                     <button type="button" onClick={() => openQuickActionModal('profile')} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-sky-950 hover:bg-sky-50">View Patient Profile</button>
-                    <button type="button" onClick={() => openQuickActionModal('treatments')} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-sky-950 hover:bg-sky-50">View Treatment Records</button>
                     <button type="button" onClick={() => openQuickActionModal('clinical')} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm font-bold text-sky-950 hover:bg-sky-50">View Clinical Notes</button>
+                    <button type="button" onClick={() => setReceiptAppointment(selectedAppointment)} className="h-11 rounded-xl border border-emerald-200 bg-emerald-50/70 px-3 text-sm font-bold text-emerald-900 hover:bg-emerald-100 transition inline-flex items-center justify-center gap-2"><FaFileInvoiceDollar className="text-emerald-700" /> Create / View Receipt</button>
+                    {['confirmed', 'follow_up', 'checked_in', 'in_consultation', 'completed'].includes(selectedAppointment.status) ? (
+                      <button
+                        type="button"
+                        onClick={() => openTreatmentModal(selectedAppointment)}
+                        className={`h-11 rounded-xl border px-3 text-sm font-bold transition inline-flex items-center justify-center gap-2 ${
+                          selectedAppointment.hasTreatmentRecord
+                            ? 'border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 hover:border-emerald-400'
+                            : 'border-violet-200 bg-violet-50/70 text-violet-900 hover:bg-violet-100'
+                        }`}
+                      >
+                        <FaTooth className={selectedAppointment.hasTreatmentRecord ? 'text-emerald-600' : 'text-violet-700'} />
+                        {selectedAppointment.hasTreatmentRecord ? 'Treatment Recorded' : 'Record Treatment'}
+                      </button>
+                    ) : null}
                   </div>
                 </section>
                 <section className="rounded-2xl border border-slate-100 bg-slate-50 p-4 md:order-7 md:col-span-2">
@@ -1068,7 +1188,7 @@ function AppointmentsPage({ allowApproval = false }) {
 
       {quickActionModal ? (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-sky-950/40 px-4 py-6 backdrop-blur-sm" role="dialog" aria-modal="true">
-          <div className="max-h-[86vh] w-full max-w-2xl overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-sky-950/20">
+          <div className={`max-h-[88vh] w-full ${quickActionModal.type === 'treatments' ? 'max-w-4xl' : 'max-w-2xl'} overflow-hidden rounded-[1.5rem] border border-slate-200 bg-white shadow-2xl shadow-sky-950/20`}>
             <div className="flex items-start justify-between gap-4 border-b border-slate-100 px-5 py-4">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Appointment Data</p>
@@ -1078,7 +1198,7 @@ function AppointmentsPage({ allowApproval = false }) {
                 <FaTimes />
               </button>
             </div>
-            <div className="max-h-[72vh] overflow-y-auto p-5">
+            <div className="max-h-[76vh] overflow-y-auto p-5">
               {quickActionModal.isLoading ? (
                 <p className="rounded-2xl bg-slate-50 px-4 py-6 text-center text-sm text-slate-500">Loading data...</p>
               ) : quickActionModal.error ? (
@@ -1103,12 +1223,27 @@ function AppointmentsPage({ allowApproval = false }) {
                   </div>
                 </div>
               ) : quickActionModal.type === 'treatments' ? (
-                <div className="grid gap-3">
+                <div className="grid gap-4">
+                  {/* Dental Chart showing treatment status and tooth procedures */}
+                  <DentalChart
+                    records={Array.isArray(quickActionModal.data) ? quickActionModal.data : []}
+                    initialToothColors={Array.isArray(quickActionModal.data) && quickActionModal.data[0]?.toothColorMap ? quickActionModal.data[0].toothColorMap : null}
+                    interactive={false}
+                    title={`Patient Dental Chart — ${quickActionModal.appointment?.patientName || 'Patient'}`}
+                  />
+
                   {Array.isArray(quickActionModal.data) && quickActionModal.data.length ? quickActionModal.data.map((record, index) => (
                     <article key={record.id || index} className="rounded-2xl border border-slate-200 bg-white p-4">
                       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
                         <div>
-                          <h3 className="font-semibold text-sky-950">{record.procedure || record.servicePerformed || 'Dental Treatment'}</h3>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="font-semibold text-sky-950">{record.procedure || record.servicePerformed || 'Dental Treatment'}</h3>
+                            {record.toothNumber ? (
+                              <span className="rounded-md bg-sky-100 px-2 py-0.5 text-xs font-bold text-sky-900">
+                                Tooth: #{record.toothNumber}
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="mt-1 text-sm text-slate-500">
                             {record.patientName || quickActionModal.appointment?.patientName || 'Patient not recorded'} • {getRecordPatientId(record, quickActionModal.appointment)}
                           </p>
@@ -1127,6 +1262,9 @@ function AppointmentsPage({ allowApproval = false }) {
                             <p>Promo Code: <span className="font-semibold text-sky-950">{record.appointmentSnapshot?.promoCode || 'None'}</span></p>
                           </div>
                         </div>
+                        {record.toothNumber ? (
+                          <p>Treated Teeth: <span className="font-semibold text-sky-950">#{record.toothNumber}</span></p>
+                        ) : null}
                         <p>Diagnosis: <span className="font-semibold text-sky-950">{record.diagnosis || 'Not recorded'}</span></p>
                         <p>Treatment: <span className="font-semibold text-sky-950">{record.treatmentPerformed || 'Not recorded'}</span></p>
                         <p>Notes: <span className="font-semibold text-sky-950">{record.notes || record.recommendations || 'No notes recorded'}</span></p>
@@ -1155,12 +1293,12 @@ function AppointmentsPage({ allowApproval = false }) {
                         <p>Recommendations: <span className="font-semibold text-sky-950">{note.clinicalNotes?.recommendations || 'Not recorded'}</span></p>
                         {note.clinicalFollowUp?.enabled ? (
                           <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-3">
-                            <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Follow-up Booking</h4>
+                            <h4 className="text-xs font-bold uppercase tracking-[0.16em] text-emerald-700">Return Appointment Booking</h4>
                             <div className="mt-2 grid gap-2 sm:grid-cols-2">
                               <p>Appointment ID: <span className="font-semibold text-sky-950">{note.clinicalFollowUp.appointmentId || formatAppointmentId(note.clinicalFollowUp.appointment) || 'Not recorded'}</span></p>
                               <p>Date: <span className="font-semibold text-sky-950">{note.clinicalFollowUp.date ? formatDate(note.clinicalFollowUp.date) : 'Not recorded'}</span></p>
                               <p>Time: <span className="font-semibold text-sky-950">{note.clinicalFollowUp.time || 'Not recorded'}</span></p>
-                              <p>Reason: <span className="font-semibold text-sky-950">{note.clinicalFollowUp.reason || 'Follow-up appointment recommended.'}</span></p>
+                              <p>Reason: <span className="font-semibold text-sky-950">{note.clinicalFollowUp.reason || 'Return appointment recommended.'}</span></p>
                             </div>
                           </div>
                         ) : null}
@@ -1297,6 +1435,18 @@ function AppointmentsPage({ allowApproval = false }) {
               </div>
             </div>
             <div className="mt-6 grid gap-3">
+              <button
+                type="button"
+                onClick={() => { setDocumentationPrompt(null); openTreatmentModal(documentationPrompt); }}
+                className={`h-12 rounded-xl px-5 text-sm font-bold text-white inline-flex items-center justify-center gap-2 ${
+                  documentationPrompt.hasTreatmentRecord
+                    ? 'bg-emerald-600 hover:bg-emerald-700'
+                    : 'bg-violet-600 hover:bg-violet-700'
+                }`}
+              >
+                <FaTooth />
+                {documentationPrompt.hasTreatmentRecord ? 'Treatment Recorded (View/Edit)' : 'Record Treatment'}
+              </button>
               {!isStaff ? (
                 <button type="button" onClick={() => openClinicalNoteModal(documentationPrompt)} className="h-12 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900">Add Clinical Note</button>
               ) : (
@@ -1356,13 +1506,13 @@ function AppointmentsPage({ allowApproval = false }) {
                     checked={Boolean(clinicalNoteForm.followUp?.enabled)}
                     onChange={(event) => updateClinicalNoteFollowUp('enabled', event.target.checked)}
                   />
-                  Book follow-up appointment and notify patient
+                  Book return appointment and notify patient
                 </label>
                 {clinicalNoteForm.followUp?.enabled ? (
                   <div className="mt-4 flex flex-col gap-3 md:flex-row md:items-stretch">
                     <div className="grid gap-3 md:w-64 md:shrink-0">
                       <label className="grid gap-2 text-sm font-bold text-slate-600">
-                        Follow-up Date
+                        Return Date
                         <span className="relative block">
                           <FaRegCalendarAlt className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
                           <input
@@ -1397,7 +1547,7 @@ function AppointmentsPage({ allowApproval = false }) {
                     </div>
                     <label className="grid min-w-0 flex-1 gap-2 text-sm font-bold text-slate-600">
                       Reason
-                      <textarea className={`${inputClass} min-h-[7.75rem] py-3`} value={clinicalNoteForm.followUp?.reason || ''} onChange={(event) => updateClinicalNoteFollowUp('reason', event.target.value)} placeholder="Follow-up reason" />
+                      <textarea className={`${inputClass} min-h-[7.75rem] py-3`} value={clinicalNoteForm.followUp?.reason || ''} onChange={(event) => updateClinicalNoteFollowUp('reason', event.target.value)} placeholder="Return appointment reason" />
                     </label>
                     {followUpAvailabilityMessage && clinicalNoteForm.followUp?.date ? (
                       <div className="rounded-xl border border-sky-100 bg-white px-3 py-2 text-xs font-semibold text-slate-500 md:basis-full">
@@ -1421,6 +1571,25 @@ function AppointmentsPage({ allowApproval = false }) {
             </div>
           </section>
         </div>
+      ) : null}
+
+      {receiptAppointment ? (
+        <AppointmentReceiptModal
+          appointment={receiptAppointment}
+          onClose={() => setReceiptAppointment(null)}
+        />
+      ) : null}
+
+      {treatmentModal ? (
+        <RecordModal
+          mode={treatmentModal.mode}
+          form={treatmentForm}
+          setForm={setTreatmentForm}
+          onClose={() => { setTreatmentModal(null); setTreatmentForm(emptyTreatmentForm); }}
+          onSubmit={saveTreatmentRecord}
+          isSaving={isSavingTreatment}
+          canEdit={true}
+        />
       ) : null}
     </main>
   )

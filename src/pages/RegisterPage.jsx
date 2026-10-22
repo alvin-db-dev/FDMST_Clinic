@@ -19,8 +19,6 @@ const initialForm = {
   guardianAddress: '',
   gender: 'prefer_not_to_say',
   address: '',
-  allergies: '',
-  medicalHistory: '',
   password: '',
   confirmPassword: '',
   acceptedPrivacy: false,
@@ -114,6 +112,7 @@ function RegisterPage() {
   const [clinicSettings, setClinicSettings] = useState(null)
   const [pendingRegistration, setPendingRegistration] = useState(null)
   const [otp, setOtp] = useState('')
+  const [devOtp, setDevOtp] = useState('')
   const [isVerifyingOtp, setIsVerifyingOtp] = useState(false)
   const [otpExpiresAt, setOtpExpiresAt] = useState('')
   const [resendAvailableAt, setResendAvailableAt] = useState('')
@@ -229,8 +228,6 @@ function RegisterPage() {
         guardianAddress: form.guardianAddress.trim(),
         gender: form.gender,
         address: form.address.trim(),
-        allergies: form.allergies.trim(),
-        medicalHistory: form.medicalHistory.trim(),
         password: form.password,
         confirmPassword: form.confirmPassword,
       }
@@ -239,8 +236,15 @@ function RegisterPage() {
       setPendingRegistration({ ...payload, email: response.email || payload.email })
       setOtpExpiresAt(response.otpExpiresAt || '')
       setResendAvailableAt(response.resendAvailableAt || '')
-      setOtp('')
-      toast.success(response.message || 'Verification code sent to your email.')
+      if (response.devOtp) {
+        setOtp(response.devOtp)
+        setDevOtp(response.devOtp)
+        toast.success(`Verification code generated. (Dev OTP: ${response.devOtp})`)
+      } else {
+        setOtp('')
+        setDevOtp('')
+        toast.success(response.message || 'Verification code sent to your email.')
+      }
     } catch (registerError) {
       setFieldErrors(registerError.errors || {})
       if (registerError.nextAllowedAt) setResendAvailableAt(registerError.nextAllowedAt)
@@ -273,6 +277,7 @@ function RegisterPage() {
       )
       setPendingRegistration(null)
       setOtp('')
+      setDevOtp('')
       setOtpExpiresAt('')
       setResendAvailableAt('')
       setForm(initialForm)
@@ -296,8 +301,15 @@ function RegisterPage() {
       const response = await fdmstApi.requestRegistrationOtp(pendingRegistration)
       setOtpExpiresAt(response.otpExpiresAt || '')
       setResendAvailableAt(response.resendAvailableAt || '')
-      toast.success(response.message || 'Verification code resent.')
-      setOtp('')
+      if (response.devOtp) {
+        setOtp(response.devOtp)
+        setDevOtp(response.devOtp)
+        toast.success(`Verification code resent. (Dev OTP: ${response.devOtp})`)
+      } else {
+        setOtp('')
+        setDevOtp('')
+        toast.success(response.message || 'Verification code resent.')
+      }
     } catch (error) {
       if (error.nextAllowedAt) setResendAvailableAt(error.nextAllowedAt)
       toast.error(getOtpResendErrorMessage(error) || 'Unable to resend verification code.')
@@ -602,28 +614,6 @@ function RegisterPage() {
             </label>
 
             <label className="grid gap-2 text-sm font-semibold text-slate-500">
-              Allergies
-              <textarea
-                className={`${inputClass} min-h-24 py-4`}
-                name="allergies"
-                onChange={handleChange}
-                placeholder="Enter known allergies, separated by commas (optional)"
-                value={form.allergies}
-              />
-            </label>
-
-            <label className="grid gap-2 text-sm font-semibold text-slate-500">
-              Medical History
-              <textarea
-                className={`${inputClass} min-h-24 py-4`}
-                name="medicalHistory"
-                onChange={handleChange}
-                placeholder="Enter medical history or current conditions if applicable"
-                value={form.medicalHistory}
-              />
-            </label>
-
-            <label className="grid gap-2 text-sm font-semibold text-slate-500">
               Password *
               <span className="relative">
                 <input
@@ -723,12 +713,18 @@ function RegisterPage() {
                 <span className="text-red-600">OTP has expired. Please request a new code.</span>
               )}
             </div>
+            {devOtp ? (
+              <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-2.5 text-xs text-amber-900 text-left">
+                <span className="font-semibold">Development Code:</span> <code className="rounded bg-amber-100 px-1.5 py-0.5 font-mono text-sm font-bold tracking-widest text-amber-950">{devOtp}</code> (auto-filled)
+              </div>
+            ) : null}
             <div className="mt-6 grid gap-3 sm:grid-cols-2">
               <button
                 type="button"
                 onClick={() => {
                   setPendingRegistration(null)
                   setOtp('')
+                  setDevOtp('')
                   setOtpExpiresAt('')
                   setResendAvailableAt('')
                 }}

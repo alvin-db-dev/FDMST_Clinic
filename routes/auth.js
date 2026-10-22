@@ -182,6 +182,7 @@ const createOtpToken = async ({ email, purpose, payload = {} }) => {
     otpExpiresAt: token.expiresAt.toISOString(),
     resendAvailableAt: new Date(token.createdAt.getTime() + OTP_RESEND_COOLDOWN_MINUTES * 60 * 1000).toISOString(),
     resendCooldownSeconds: OTP_RESEND_COOLDOWN_MINUTES * 60,
+    ...(process.env.NODE_ENV !== "production" ? { devOtp: otp } : {}),
   };
 };
 
