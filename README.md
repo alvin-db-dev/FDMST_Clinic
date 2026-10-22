@@ -22,6 +22,10 @@ Flores-Dizon Dental Clinic Management System. One Node.js project: a React/Vite 
 
 ## Local Development
 
+On Windows, double-click [`Start FDMST.bat`](./Start%20FDMST.bat) in the project folder. It checks the prerequisites and starts both the API and frontend in a terminal window. Open `http://localhost:5173` in your browser. The project still requires a configured `.env` file and a reachable MongoDB instance.
+
+Alternatively, run the commands below from a terminal:
+
 ```bash
 npm ci
 cp .env.example .env
