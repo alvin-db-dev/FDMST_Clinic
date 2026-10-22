@@ -22,6 +22,7 @@ import {
   FaTrash,
 } from 'react-icons/fa'
 import { authStorage, fdmstApi } from '../../api/fdmstApi.js'
+import ClinicalAttachmentUrl from '../../components/ClinicalAttachmentUrl.jsx'
 import DateRangeFilter from '../../components/DateRangeFilter.jsx'
 import DentalChart, { DENTAL_COLORS } from '../../components/DentalChart.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -34,7 +35,7 @@ const statusOptions = [
   ['completed', 'Completed'],
   ['in_progress', 'In Progress'],
   ['cancelled', 'Cancelled'],
-  ['follow_up_required', 'Follow-up Required'],
+  ['follow_up_required', 'Return Appointment'],
 ]
 const emptyForm = {
   patientName: '',
@@ -43,6 +44,7 @@ const emptyForm = {
   visitDate: new Date().toISOString().slice(0, 10),
   procedure: '',
   toothNumber: '',
+  allergies: '',
   toothColorMap: {},
   diagnosis: '',
   treatmentPerformed: '',
@@ -67,6 +69,12 @@ const statusClass = {
 }
 
 const statusLabel = (status) => statusOptions.find(([value]) => value === status)?.[1] || 'Completed'
+
+const getPatientId = (patient) => (
+  typeof patient === 'object' && patient
+    ? patient.id || patient._id || ''
+    : patient || ''
+)
 
 const formatFileSize = (bytes) => {
   if (!bytes || Number.isNaN(Number(bytes))) return ''
@@ -95,6 +103,9 @@ const toForm = (record) => ({
   appointment: record?.appointment || '',
   appointmentDisplay: record?.appointmentSnapshot?.appointmentId || formatAppointmentId(record?.appointment),
   patientId: record?.patientId || record?.patientSnapshot?.patientId || '',
+  allergies: Array.isArray(record?.patient?.allergies)
+    ? record.patient.allergies.join(', ')
+    : String(record?.patient?.allergies || ''),
   visitDate: record?.visitDate ? new Date(record.visitDate).toISOString().slice(0, 10) : emptyForm.visitDate,
   procedure: record?.procedure || record?.servicePerformed || '',
   toothColorMap: record?.toothColorMap || {},
@@ -122,7 +133,7 @@ const toForm = (record) => ({
 
 export { emptyForm, toForm }
 
-export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, canEdit, onAddClinicalNote }) {
+export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, canEdit, onAddClinicalNote, xrayOnlyUpload = false, hideTreatmentPlan = false, canEditPatientAllergies = false }) {
   const isReadonly = mode === 'view' || !canEdit
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const [patients, setPatients] = useState([])
@@ -131,7 +142,16 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
   const [lookupStatus, setLookupStatus] = useState('loading')
   const [pendingAttachments, setPendingAttachments] = useState([])
   const [isUploadingFiles, setIsUploadingFiles] = useState(false)
+  const [isAllergyPasswordOpen, setIsAllergyPasswordOpen] = useState(false)
+  const [allergyAdminPassword, setAllergyAdminPassword] = useState('')
+  const [isSavingAllergies, setIsSavingAllergies] = useState(false)
+  const [isLoadingPatientAllergies, setIsLoadingPatientAllergies] = useState(
+    Boolean(canEditPatientAllergies && getPatientId(form.patient)),
+  )
+  const [patientAllergiesLoadError, setPatientAllergiesLoadError] = useState('')
   const [activeLightbox, setActiveLightbox] = useState(null)
+  const allergiesEditedRef = useRef(false)
+  const savedAllergiesRef = useRef(form.allergies || '')
   const xrayInputRef = useRef(null)
   const fileInputRef = useRef(null)
   const toast = useToast()
@@ -188,8 +208,47 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
 
   const handleModalSubmit = async () => {
     if (isSaving || isUploadingFiles) return
+    const patientId = getPatientId(form.patient)
+    const allergiesChanged = Boolean(
+      canEditPatientAllergies
+      && patientId
+      && String(form.allergies || '').trim() !== String(savedAllergiesRef.current || '').trim(),
+    )
+    if (allergiesChanged && (isLoadingPatientAllergies || patientAllergiesLoadError)) {
+      toast.error(patientAllergiesLoadError || 'Wait for the current patient allergies to finish loading before saving.')
+      return
+    }
+    if (allergiesChanged && !isAllergyPasswordOpen) {
+      setIsAllergyPasswordOpen(true)
+      return
+    }
+
+    const updatePatientAllergies = async () => {
+      if (!allergiesChanged) return
+      await fdmstApi.update('patients', patientId, {
+        allergies: String(form.allergies || '').trim(),
+        adminPassword: allergyAdminPassword,
+      })
+      savedAllergiesRef.current = String(form.allergies || '').trim()
+      allergiesEditedRef.current = false
+      setIsAllergyPasswordOpen(false)
+      setAllergyAdminPassword('')
+    }
+
     if (!pendingAttachments.length) {
-      onSubmit(form)
+      if (allergiesChanged) {
+        setIsSavingAllergies(true)
+        try {
+          await updatePatientAllergies()
+          onSubmit(form)
+        } catch (error) {
+          toast.error(error.message || 'Unable to update patient allergies.')
+        } finally {
+          setIsSavingAllergies(false)
+        }
+      } else {
+        onSubmit(form)
+      }
       return
     }
 
@@ -207,6 +266,7 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
       )
 
       const mergedAttachments = [...(form.attachments || []), ...uploadedList]
+      await updatePatientAllergies()
       pendingAttachments.forEach((item) => {
         if (item.previewUrl) URL.revokeObjectURL(item.previewUrl)
       })
@@ -220,6 +280,17 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
       toast.error(err.message || 'Failed to upload attachments. Please try again.')
     } finally {
       setIsUploadingFiles(false)
+    }
+  }
+
+  const confirmAllergyUpdate = async (event) => {
+    event.preventDefault()
+    if (!allergyAdminPassword || isSavingAllergies) return
+    setIsSavingAllergies(true)
+    try {
+      await handleModalSubmit()
+    } finally {
+      setIsSavingAllergies(false)
     }
   }
 
@@ -274,6 +345,36 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
     return () => { active = false }
   }, [mode])
 
+  const patientProfileId = getPatientId(form.patient)
+  useEffect(() => {
+    if (!canEditPatientAllergies || !patientProfileId) {
+      setIsLoadingPatientAllergies(false)
+      return undefined
+    }
+    let active = true
+    setIsLoadingPatientAllergies(true)
+    setPatientAllergiesLoadError('')
+    fdmstApi.getById('patients', patientProfileId)
+      .then((patient) => {
+        if (!active) return
+        const allergies = Array.isArray(patient.allergies) ? patient.allergies.join(', ') : String(patient.allergies || '')
+        savedAllergiesRef.current = allergies
+        setIsLoadingPatientAllergies(false)
+        if (!allergiesEditedRef.current) {
+          setForm((current) => ({ ...current, allergies }))
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          console.error('Unable to load patient allergies:', error)
+          setPatientAllergiesLoadError(error.message || 'Unable to load current patient allergies.')
+          setIsLoadingPatientAllergies(false)
+          toast.error(error.message || 'Unable to load patient allergies.')
+        }
+      })
+    return () => { active = false }
+  }, [canEditPatientAllergies, patientProfileId, setForm, toast])
+
   const patientName = (patient) => [patient.firstName, patient.middleName, patient.lastName].filter(Boolean).join(' ')
   const matches = patients.filter((patient) => patientName(patient).toLowerCase().includes(form.patientName.trim().toLowerCase()))
   const patientAppointments = appointments.filter((appointment) => {
@@ -282,11 +383,17 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
   })
   const selectPatient = (patient) => {
     const appointment = appointments.find((item) => String(item.patientSnapshot?.id || item.patient?._id || item.patient) === String(patient._id))
+    const allergies = Array.isArray(patient.allergies) ? patient.allergies.join(', ') : String(patient.allergies || '')
+    allergiesEditedRef.current = false
+    savedAllergiesRef.current = allergies
+    setIsLoadingPatientAllergies(true)
+    setPatientAllergiesLoadError('')
     setForm((current) => ({
       ...current,
       patientName: patientName(patient),
       patient: patient._id,
       patientId: patient.patientId || '',
+      allergies,
       appointment: appointment?.id || '',
       appointmentDisplay: appointment?.appointmentId || '',
       procedure: current.procedure || appointment?.service || '',
@@ -385,8 +492,28 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
               {statusOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </select>
           </label>
+          {canEditPatientAllergies ? (
+            <label className="order-1 grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
+              Patient Allergies
+              <textarea
+                className={textareaClass}
+                value={form.allergies || ''}
+                disabled={isReadonly || !patientProfileId || isLoadingPatientAllergies || Boolean(patientAllergiesLoadError)}
+                onChange={(event) => {
+                  allergiesEditedRef.current = true
+                  update('allergies', event.target.value)
+                }}
+                placeholder={patientProfileId ? 'Enter allergies, separated by commas (optional)' : 'Select a patient to edit allergies'}
+              />
+              <span className="text-xs font-medium text-slate-500">
+                {patientAllergiesLoadError || (isLoadingPatientAllergies
+                  ? 'Loading current patient allergies...'
+                  : 'Saved to the patient profile and used for future visits. Admin password confirmation is required when changed.')}
+              </span>
+            </label>
+          ) : null}
 
-          <div className="lg:col-span-3">
+          <div className="order-1 lg:col-span-3">
             <DentalChart
               selectedTooth={form.toothNumber}
               initialProcedure={form.procedure}
@@ -401,25 +528,27 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
               title="Interactive Dental Odontogram (Click tooth to select/deselect)"
             />
           </div>
-          <label className="grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
+          <label className="order-1 grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
             Diagnosis
             <textarea className={textareaClass} value={form.diagnosis} disabled={isReadonly} onChange={(event) => update('diagnosis', event.target.value)} placeholder="Diagnosis" />
           </label>
-          <label className="grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
+          <label className="order-1 grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
             Treatment Description
             <textarea className={textareaClass} value={form.treatmentPerformed} disabled={isReadonly} onChange={(event) => update('treatmentPerformed', event.target.value)} placeholder="Treatment performed" />
           </label>
-          <label className="grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
+          <label className="order-1 grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
             Materials Used
             <textarea className={textareaClass} value={form.materialsUsed} disabled={isReadonly} onChange={(event) => update('materialsUsed', event.target.value)} placeholder="Optional materials used" />
           </label>
-          <label className="grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
+          <label className="order-1 grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
             Follow-up Notes
             <textarea className={textareaClass} value={form.recommendations} disabled={isReadonly} onChange={(event) => update('recommendations', event.target.value)} placeholder="Follow-up notes or recommendations" />
           </label>
 
+          {!hideTreatmentPlan ? (
+          <>
           {/* Treatment Plan / Patient Roadmap Option */}
-          <div className="lg:col-span-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
+          <div className="order-1 lg:col-span-3 rounded-2xl border border-sky-200 bg-sky-50/60 p-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <label className="flex items-center gap-3 cursor-pointer">
                 <input
@@ -625,6 +754,8 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
               </div>
             ) : null}
           </div>
+          </>
+          ) : null}
 
           {/* X-rays and Clinical Photos Section */}
           <section className="lg:col-span-3 rounded-2xl border border-sky-200 bg-sky-50/50 p-4 sm:p-5">
@@ -651,17 +782,19 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                       e.target.value = ''
                     }}
                   />
-                  <input
-                    ref={fileInputRef}
-                    className="hidden"
-                    type="file"
-                    accept="image/jpeg,image/png,image/webp,application/pdf"
-                    multiple
-                    onChange={(e) => {
-                      addAttachments(e.target.files, 'file')
-                      e.target.value = ''
-                    }}
-                  />
+                  {!xrayOnlyUpload ? (
+                    <input
+                      ref={fileInputRef}
+                      className="hidden"
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp,application/pdf"
+                      multiple
+                      onChange={(e) => {
+                        addAttachments(e.target.files, 'file')
+                        e.target.value = ''
+                      }}
+                    />
+                  ) : null}
                   <button
                     type="button"
                     onClick={() => xrayInputRef.current?.click()}
@@ -670,14 +803,16 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                     <FaImage className="text-sky-600" />
                     + Add Dental X-ray
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-sky-950 px-3 text-xs font-bold text-white shadow-2xs hover:bg-sky-900 transition"
-                  >
-                    <FaCloudUploadAlt className="text-amber-400" />
-                    + Add Photo / File
-                  </button>
+                  {!xrayOnlyUpload ? (
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="inline-flex h-9 items-center gap-1.5 rounded-xl bg-sky-950 px-3 text-xs font-bold text-white shadow-2xs hover:bg-sky-900 transition"
+                    >
+                      <FaCloudUploadAlt className="text-amber-400" />
+                      + Add Photo / File
+                    </button>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -690,19 +825,18 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                   const isImage = String(attachment.mimeType || '').startsWith('image/')
                   const isXray = attachment.category === 'xray'
                   return (
-                    <article
-                      key={attachmentIdentifier}
-                      className="group relative flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-2xs transition hover:border-sky-300 hover:shadow-xs"
-                    >
-                      {isImage && attachment.url ? (
+                    <ClinicalAttachmentUrl key={attachmentIdentifier} attachment={attachment}>
+                      {(attachmentUrl, attachmentError) => (
+                        <article className="group relative flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3 shadow-2xs transition hover:border-sky-300 hover:shadow-xs">
+                      {isImage && attachmentUrl ? (
                         <button
                           type="button"
-                          onClick={() => setActiveLightbox({ ...attachment, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })}
+                          onClick={() => setActiveLightbox({ ...attachment, url: attachmentUrl, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })}
                           className="relative h-14 w-14 shrink-0 overflow-hidden rounded-lg border border-slate-200 bg-slate-100 group-hover:ring-2 group-hover:ring-sky-400"
                           title="Click to view full image"
                         >
                           <img
-                            src={attachment.url}
+                            src={attachmentUrl}
                             alt={attachment.name || 'Treatment X-ray'}
                             className="h-full w-full object-cover transition group-hover:scale-105"
                           />
@@ -717,14 +851,14 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                       )}
 
                       <div className="min-w-0 flex-1">
-                        {attachment.url ? (
+                        {attachmentUrl ? (
                           <button
                             type="button"
                             onClick={() => {
                               if (isImage) {
-                                setActiveLightbox({ ...attachment, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })
+                                setActiveLightbox({ ...attachment, url: attachmentUrl, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })
                               } else {
-                                window.open(attachment.url, '_blank')
+                                window.open(attachmentUrl, '_blank')
                               }
                             }}
                             className="block w-full truncate text-left text-xs font-bold text-sky-950 hover:text-sky-700 hover:underline"
@@ -733,9 +867,12 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                             {attachment.name || 'Treatment attachment'}
                           </button>
                         ) : (
-                          <p className="truncate text-xs font-bold text-slate-700" title={attachment.name}>
-                            {attachment.name || 'Treatment attachment'}
-                          </p>
+                          <div className="min-w-0">
+                            <p className="truncate text-xs font-bold text-slate-700" title={attachment.name}>
+                              {attachment.name || 'Treatment attachment'}
+                            </p>
+                            {attachmentError ? <p className="mt-1 text-[11px] font-semibold text-rose-600">{attachmentError}</p> : null}
+                          </div>
                         )}
 
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
@@ -764,7 +901,9 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
                           <FaTrash className="h-3.5 w-3.5" />
                         </button>
                       ) : null}
-                    </article>
+                        </article>
+                      )}
+                    </ClinicalAttachmentUrl>
                   )
                 })}
 
@@ -835,12 +974,51 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
             </button>
           ) : null}
           {mode !== 'view' && canEdit ? (
-            <button type="button" className="h-11 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900 disabled:opacity-60" disabled={isSaving || isUploadingFiles} onClick={handleModalSubmit}>
-              {isSaving || isUploadingFiles ? 'Saving...' : mode === 'create' ? 'Create Treatment Record' : 'Save Changes'}
+            <button type="button" className="h-11 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900 disabled:opacity-60" disabled={isSaving || isUploadingFiles || isLoadingPatientAllergies || isSavingAllergies} onClick={handleModalSubmit}>
+              {isSaving || isUploadingFiles || isSavingAllergies ? 'Saving...' : mode === 'create' ? 'Create Treatment Record' : 'Save Changes'}
             </button>
           ) : null}
         </div>
       </section>
+
+      {isAllergyPasswordOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-sm">
+          <section role="dialog" aria-modal="true" aria-labelledby="allergy-password-title" className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+            <h3 id="allergy-password-title" className="text-lg font-bold text-sky-950">Confirm Patient Allergy Changes</h3>
+            <p className="mt-2 text-sm leading-6 text-slate-600">Enter your admin password to save these allergies to the patient profile.</p>
+            <form className="mt-5 space-y-4" onSubmit={confirmAllergyUpdate}>
+              <label className="grid gap-2 text-sm font-semibold text-slate-700">
+                Admin Password
+                <input
+                  type="password"
+                  autoComplete="current-password"
+                  className={inputClass}
+                  value={allergyAdminPassword}
+                  onChange={(event) => setAllergyAdminPassword(event.target.value)}
+                  required
+                  autoFocus
+                />
+              </label>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  className="h-10 rounded-xl border border-slate-200 px-4 text-sm font-bold text-slate-600 hover:bg-slate-50"
+                  disabled={isSavingAllergies}
+                  onClick={() => {
+                    setIsAllergyPasswordOpen(false)
+                    setAllergyAdminPassword('')
+                  }}
+                >
+                  Cancel
+                </button>
+                <button type="submit" className="h-10 rounded-xl bg-sky-950 px-4 text-sm font-bold text-white hover:bg-sky-900 disabled:opacity-60" disabled={isSavingAllergies}>
+                  {isSavingAllergies ? 'Saving...' : 'Verify and Save'}
+                </button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {/* Lightbox Image Preview Modal */}
       {activeLightbox ? (
@@ -1281,6 +1459,7 @@ function StaffTreatmentRecordsPage() {
               ? () => navigate('/admin/clinical-notes?appointment=' + form.appointment)
               : null
           }
+          canEditPatientAllergies={isAdmin}
         />
       ) : null}
     </main>

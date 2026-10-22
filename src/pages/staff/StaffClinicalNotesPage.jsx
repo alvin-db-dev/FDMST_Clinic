@@ -18,6 +18,7 @@ import {
   FaTimes,
 } from 'react-icons/fa'
 import { authStorage, fdmstApi } from '../../api/fdmstApi.js'
+import ClinicalAttachmentUrl from '../../components/ClinicalAttachmentUrl.jsx'
 import DateRangeFilter from '../../components/DateRangeFilter.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 import { formatDate } from '../../utils/auth.js'
@@ -290,14 +291,19 @@ function NoteModal({
                   const attachmentId = attachment.id || attachment._id
                   const isImage = String(attachment.mimeType || '').startsWith('image/')
                   return (
-                    <article key={attachmentId || attachment.path} className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
-                      {isImage && attachment.url ? <img className="h-12 w-12 shrink-0 rounded-lg object-cover" src={attachment.url} alt="Clinical attachment" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-700"><FaFileAlt /></span>}
+                    <ClinicalAttachmentUrl key={attachmentId || attachment.path} attachment={attachment}>
+                      {(attachmentUrl, attachmentError) => (
+                    <article className="flex min-w-0 items-center gap-3 rounded-xl border border-slate-200 bg-white p-3">
+                      {isImage && attachmentUrl ? <img className="h-12 w-12 shrink-0 rounded-lg object-cover" src={attachmentUrl} alt="Clinical attachment" /> : <span className="grid h-12 w-12 shrink-0 place-items-center rounded-lg bg-sky-50 text-sky-700"><FaFileAlt /></span>}
                       <div className="min-w-0 flex-1">
-                        {attachment.url ? <a className="block truncate text-xs font-bold text-sky-900 hover:underline" href={attachment.url} target="_blank" rel="noreferrer">{attachment.name || 'Clinical attachment'}</a> : <p className="truncate text-xs font-bold text-slate-700">{attachment.name || 'Clinical attachment'}</p>}
+                        {attachmentUrl ? <a className="block truncate text-xs font-bold text-sky-900 hover:underline" href={attachmentUrl} target="_blank" rel="noreferrer">{attachment.name || 'Clinical attachment'}</a> : <p className="truncate text-xs font-bold text-slate-700">{attachment.name || 'Clinical attachment'}</p>}
+                        {attachmentError ? <p className="mt-1 text-[11px] font-semibold text-rose-600">{attachmentError}</p> : null}
                         <p className="mt-1 text-[11px] font-semibold uppercase tracking-wide text-slate-400">{attachment.category === 'xray' ? 'X-ray photo' : 'File'}</p>
                       </div>
                       {!isReadonly && isAdmin ? <button type="button" className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-rose-600 hover:bg-rose-50" title="Remove attachment" onClick={() => removeStoredAttachment(attachmentId)}><FaTrash /></button> : null}
                     </article>
+                      )}
+                    </ClinicalAttachmentUrl>
                   )
                 })}
                 {pendingAttachments.map((attachment) => (

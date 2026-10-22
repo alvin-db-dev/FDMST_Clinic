@@ -139,7 +139,23 @@ const request = async (path, options = {}) => {
   return parseResponse(response)
 }
 
+const getClinicalFile = async (path) => {
+  const token = authStorage.getToken()
+  const query = new URLSearchParams({ path })
+  const response = await fetch(`${API_BASE_URL}/uploads/clinical-file-view?${query}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+
+  if (!response.ok) {
+    const message = await response.json().then((data) => data?.message || '').catch(() => '')
+    throw new Error(message || describeHttpFailure(response))
+  }
+
+  return response.blob()
+}
+
 export const fdmstApi = {
+  getClinicalFile,
   health: () => request('/health'),
   register: (payload) =>
     request('/auth/register', {
@@ -189,7 +205,13 @@ export const fdmstApi = {
   getAdminAnalytics: (filters = {}) => {
     const params = new URLSearchParams()
     Object.entries(filters).forEach(([key, value]) => {
-      if (value) params.set(key, value)
+      if (Array.isArray(value)) {
+        value.forEach((item) => {
+          if (item) params.append(key, item)
+        })
+      } else if (value) {
+        params.set(key, value)
+      }
     })
     const query = params.toString()
     return request(`/dashboard/admin/analytics${query ? `?${query}` : ''}`)
@@ -461,6 +483,7 @@ export const fdmstApi = {
     const query = params.toString()
     return request(`/dentalrecords/treatment-records${query ? `?${query}` : ''}`)
   },
+  getTreatmentRecord: (id) => request(`/dentalrecords/treatment-records/${id}`),
   createTreatmentRecord: (payload) =>
     request('/dentalrecords/treatment-records', {
       method: 'POST',

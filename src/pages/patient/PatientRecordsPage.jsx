@@ -8,6 +8,7 @@ import {
   FaCalendarPlus,
   FaCamera,
   FaCapsules,
+  FaCheckCircle,
   FaClipboardList,
   FaExpand,
   FaExternalLinkAlt,
@@ -27,9 +28,11 @@ import {
 } from 'react-icons/fa'
 import { fdmstApi } from '../../api/fdmstApi.js'
 import AppointmentReceiptModal from '../../components/AppointmentReceiptModal.jsx'
+import ClinicalAttachmentUrl from '../../components/ClinicalAttachmentUrl.jsx'
 import DentalChart from '../../components/DentalChart.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
 import { formatDate, formatStatus } from '../../utils/auth.js'
+import { RecordModal, emptyForm as emptyTreatmentForm, toForm as toTreatmentForm } from '../staff/StaffTreatmentRecordsPage.jsx'
 
 const inputClass =
   'h-12 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm font-medium text-slate-700 outline-none transition placeholder:text-slate-400 focus:border-sky-950 focus:ring-4 focus:ring-sky-100'
@@ -119,6 +122,8 @@ function PatientRecordsPage() {
   const [sortBy, setSortBy] = useState('date_desc')
   const [isLoading, setIsLoading] = useState(true)
   const [selectedRecord, setSelectedRecord] = useState(null)
+  const [treatmentRecordForm, setTreatmentRecordForm] = useState(emptyTreatmentForm)
+  const [isTreatmentRecordOpen, setIsTreatmentRecordOpen] = useState(false)
   const [receiptAppointment, setReceiptAppointment] = useState(null)
   const [lightboxAttachment, setLightboxAttachment] = useState(null)
 
@@ -207,6 +212,11 @@ function PatientRecordsPage() {
     () => [...appointments].sort((a, b) => new Date(b.appointmentDate || 0) - new Date(a.appointmentDate || 0)),
     [appointments],
   )
+
+  const openTreatmentRecord = (record) => {
+    setTreatmentRecordForm(toTreatmentForm(record))
+    setIsTreatmentRecordOpen(true)
+  }
   const lastCompletedAppointment = useMemo(
     () => appointmentHistory.find((appointment) => appointment.status === 'completed') || appointmentHistory[0],
     [appointmentHistory],
@@ -230,11 +240,23 @@ function PatientRecordsPage() {
       .filter((record) => record.treatmentPlan?.enabled && Array.isArray(record.treatmentPlan?.steps) && record.treatmentPlan.steps.length > 0)
       .map((record) => ({
         ...record.treatmentPlan,
+        steps: record.treatmentPlan.steps.map((step) => {
+          const targetDate = formatDateKey(step.targetDate)
+          const hasCompletedAppointment = appointments.some((appointment) => (
+            targetDate
+            && String(appointment.status || '').trim().toLowerCase() === 'completed'
+            && formatDateKey(appointment.appointmentDate) === targetDate
+          ))
+          return {
+            ...step,
+            status: step.status === 'completed' || hasCompletedAppointment ? 'completed' : step.status,
+          }
+        }),
         recordId: record._id,
         dentistName: record.dentistName || 'Clinic Dentist',
         visitDate: record.visitDate,
       }))
-  }, [records])
+  }, [appointments, records])
 
   return (
     <main className="px-4 py-6 text-slate-700 sm:px-6 lg:px-8">
@@ -345,19 +367,18 @@ function PatientRecordsPage() {
                         const isImage = String(item.mimeType || '').startsWith('image/')
                         const isXray = item.category === 'xray'
                         return (
-                          <div
-                            key={item.id || item._id || item.path || idx}
-                            className="group relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs transition hover:border-sky-300 hover:shadow-md"
-                          >
-                            {isImage && item.url ? (
+                          <ClinicalAttachmentUrl key={item.id || item._id || item.path || idx} attachment={item}>
+                            {(attachmentUrl, attachmentError) => (
+                              <div className="group relative flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-2xs transition hover:border-sky-300 hover:shadow-md">
+                            {isImage && attachmentUrl ? (
                               <button
                                 type="button"
-                                onClick={() => setLightboxAttachment({ ...item, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })}
+                                onClick={() => setLightboxAttachment({ ...item, url: attachmentUrl, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })}
                                 className="relative aspect-video w-full overflow-hidden bg-slate-950 group-hover:opacity-95"
                                 title="Click to view full image"
                               >
                                 <img
-                                  src={item.url}
+                                  src={attachmentUrl}
                                   alt={item.name || 'Dental X-ray'}
                                   className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
                                 />
@@ -385,18 +406,19 @@ function PatientRecordsPage() {
                                 <p className="mt-1.5 truncate text-xs font-bold text-sky-950" title={item.name}>
                                   {item.name || 'Attachment'}
                                 </p>
+                                {attachmentError ? <p className="mt-1 text-[11px] font-semibold text-rose-600">{attachmentError}</p> : null}
                               </div>
 
                               <div className="mt-3 flex items-center justify-between border-t border-slate-100 pt-2 text-[11px] text-slate-500">
                                 <span>{item.size ? `${Math.round(item.size / 1024)} KB` : ''}</span>
-                                {item.url ? (
+                                {attachmentUrl ? (
                                   <button
                                     type="button"
                                     onClick={() => {
                                       if (isImage) {
-                                        setLightboxAttachment({ ...item, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })
+                                        setLightboxAttachment({ ...item, url: attachmentUrl, title: isXray ? 'Dental X-ray' : 'Clinical Photo' })
                                       } else {
-                                        window.open(item.url, '_blank')
+                                        window.open(attachmentUrl, '_blank')
                                       }
                                     }}
                                     className="font-bold text-sky-700 hover:text-sky-950 hover:underline"
@@ -406,7 +428,9 @@ function PatientRecordsPage() {
                                 ) : null}
                               </div>
                             </div>
-                          </div>
+                              </div>
+                            )}
+                          </ClinicalAttachmentUrl>
                         )
                       })}
                     </div>
@@ -473,6 +497,7 @@ function PatientRecordsPage() {
                         const dateFormatted = step.targetDate ? formatDate(step.targetDate) : 'Date to be scheduled'
                         const dateKey = formatDateKey(step.targetDate)
                         const bookingUrl = `/patient/book-appointment?service=${encodeURIComponent(step.procedure || '')}&date=${encodeURIComponent(dateKey)}`
+                        const isStepCompleted = step.status === 'completed'
 
                         return (
                           <div key={sIdx} className="relative group">
@@ -508,14 +533,21 @@ function PatientRecordsPage() {
                                 </div>
 
                                 <div className="shrink-0 pt-2 lg:pt-0">
-                                  <Link
-                                    to={bookingUrl}
-                                    className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-950 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-sky-900 hover:shadow-md sm:w-auto"
-                                  >
-                                    <FaCalendarPlus className="h-3.5 w-3.5 text-amber-400" />
-                                    <span>Schedule for this Date</span>
-                                    <FaArrowRight className="h-2.5 w-2.5" />
-                                  </Link>
+                                  {isStepCompleted ? (
+                                    <span className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-50 px-4 py-2.5 text-xs font-bold text-emerald-700 ring-1 ring-emerald-200 sm:w-auto">
+                                      <FaCheckCircle className="h-3.5 w-3.5" />
+                                      Completed
+                                    </span>
+                                  ) : (
+                                    <Link
+                                      to={bookingUrl}
+                                      className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-sky-950 px-4 py-2.5 text-xs font-bold text-white shadow-sm transition hover:bg-sky-900 hover:shadow-md sm:w-auto"
+                                    >
+                                      <FaCalendarPlus className="h-3.5 w-3.5 text-amber-400" />
+                                      <span>Schedule for this Date</span>
+                                      <FaArrowRight className="h-2.5 w-2.5" />
+                                    </Link>
+                                  )}
                                 </div>
                               </div>
                             </div>
@@ -627,13 +659,10 @@ function PatientRecordsPage() {
                       <td className="px-4 py-4 text-right">
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); setSelectedRecord(isActive ? null : row) }}
-                          className={`inline-flex h-8 w-8 items-center justify-center rounded-lg transition ${
-                            isActive
-                              ? 'bg-sky-950 text-white shadow-md'
-                              : 'bg-sky-50 text-sky-700 hover:bg-sky-100'
-                          }`}
-                          title={isActive ? 'Hide dental chart for this record' : 'View dental chart for this record'}
+                          onClick={(e) => { e.stopPropagation(); openTreatmentRecord(row._raw) }}
+                          className="inline-flex h-8 w-8 items-center justify-center rounded-lg bg-sky-50 text-sky-700 transition hover:bg-sky-100"
+                          title="View treatment record"
+                          aria-label={`View treatment record for ${row.service}`}
                         >
                           <FaEye className="h-3.5 w-3.5" />
                         </button>
@@ -698,6 +727,22 @@ function PatientRecordsPage() {
         <AppointmentReceiptModal
           appointment={receiptAppointment}
           onClose={() => setReceiptAppointment(null)}
+        />
+      ) : null}
+
+      {isTreatmentRecordOpen ? (
+        <RecordModal
+          mode="view"
+          form={treatmentRecordForm}
+          setForm={setTreatmentRecordForm}
+          onClose={() => {
+            setIsTreatmentRecordOpen(false)
+            setTreatmentRecordForm(emptyTreatmentForm)
+          }}
+          onSubmit={() => {}}
+          isSaving={false}
+          canEdit={false}
+          hideTreatmentPlan
         />
       ) : null}
 

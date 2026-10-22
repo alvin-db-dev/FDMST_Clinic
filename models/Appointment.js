@@ -30,6 +30,24 @@ const appointmentSchema = new mongoose.Schema(
     serviceRef: {
       type: mongoose.Schema.Types.ObjectId,
     },
+    serviceItems: [
+      {
+        serviceName: {
+          type: String,
+          trim: true,
+          required: true,
+        },
+        serviceRef: mongoose.Schema.Types.ObjectId,
+        price: {
+          type: Number,
+          min: [0, "Service price cannot be negative."],
+        },
+        duration: {
+          type: Number,
+          min: [1, "Service duration must be at least 1 minute."],
+        },
+      },
+    ],
     servicePriceSnapshot: {
       type: Number,
       min: [0, "Service price cannot be negative."],

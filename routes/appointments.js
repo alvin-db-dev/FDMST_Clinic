@@ -12,6 +12,7 @@ const User = require("../models/User");
 const { sendMail } = require("../services/mailService");
 const asyncHandler = require("../utils/asyncHandler");
 const { validateAppointmentSlot } = require("../utils/appointmentAvailability");
+const { calculatePromotionForServices, promotionAppliesToService } = require("../utils/appointmentPromotion");
 const { addDays: addDateKeyDays, clinicDateKey, isPastClinicSlot, requestedDateKey, storedAppointmentDayRange } = require("../utils/clinicDate");
 const { authenticate, authorize } = require("../middleware/auth");
 const { MOBILE_NUMBER_MESSAGE, isValidMobileNumber, normalizeMobileNumber } = require("../utils/validation");
@@ -55,6 +56,12 @@ const uniqueContactEmails = (...emails) => [...new Set(
     .map((email) => String(email || "").trim().toLowerCase())
     .filter(Boolean),
 )];
+
+const normalizeServiceNames = (values) => [...new Set(
+  (Array.isArray(values) ? values : [values])
+    .map((name) => String(name || "").trim())
+    .filter(Boolean),
+)].sort((left, right) => left.localeCompare(right));
 
 const sendPatientContactMail = async ({ patient, fallbackEmail, subject, message, html }) => {
   const recipients = uniqueContactEmails(patient?.email, patient?.guardianEmail, fallbackEmail);
@@ -329,43 +336,11 @@ const createAutomaticTreatmentRecord = async (appointment, user) => {
   }
 };
 
-const normalizeServiceName = (value) => String(value || "").trim().toLowerCase();
-
-const promotionAppliesToService = (promotion, serviceName) => {
-  const selected = normalizeServiceName(serviceName);
-  const services = Array.isArray(promotion.applicableServices) && promotion.applicableServices.length
-    ? promotion.applicableServices
-    : promotion.serviceType
-      ? [promotion.serviceType]
-      : ["All Services"];
-
-  return services.some((service) => {
-    const normalized = normalizeServiceName(service);
-    return normalized === "all services" || normalized === selected;
-  });
-};
-
 const isPromotionAvailableByDate = (promotion, now = new Date()) => {
   if (!promotion || promotion.status !== "active") return false;
   if (promotion.startDate && startOfDay(promotion.startDate) > now) return false;
   if (promotion.endDate && endOfDay(promotion.endDate) < now) return false;
   return true;
-};
-
-const calculatePromotionPrice = (promotion, originalPrice) => {
-  const price = Math.max(Number(originalPrice) || 0, 0);
-  const discountType = promotion.effectiveDiscountType || promotion.discountType;
-  const discountValue = Math.max(Number(promotion.effectiveDiscountValue ?? promotion.discountValue) || 0, 0);
-  const discountAmount = discountType === "percentage"
-    ? price * Math.min(discountValue, 100) / 100
-    : Math.min(discountValue, price);
-  const normalizedDiscount = Math.min(Math.max(Math.round(discountAmount * 100) / 100, 0), price);
-
-  return {
-    originalPrice: price,
-    discountAmount: normalizedDiscount,
-    finalPrice: Math.max(Math.round((price - normalizedDiscount) * 100) / 100, 0),
-  };
 };
 
 const resolvePromotionDiscount = (promotion) => {
@@ -399,7 +374,7 @@ const resolvePromotionDiscount = (promotion) => {
   return { discountType: currentType, discountValue: 0 };
 };
 
-const validatePromotionForBooking = async ({ patientId, serviceName, servicePrice, promoCode, autoApply = false }) => {
+const validatePromotionForBooking = async ({ patientId, services, serviceName, servicePrice, promoCode, autoApply = false }) => {
   if (!patientId) {
     return {
       valid: false,
@@ -407,6 +382,9 @@ const validatePromotionForBooking = async ({ patientId, serviceName, servicePric
     };
   }
 
+  const selectedServices = Array.isArray(services) && services.length
+    ? services
+    : [{ serviceName, price: servicePrice }];
   const now = new Date();
   const baseQuery = {
     status: "active",
@@ -422,14 +400,25 @@ const validatePromotionForBooking = async ({ patientId, serviceName, servicePric
     : baseQuery;
 
   const candidates = await Promotion.find(query).sort({ discountValue: -1, endDate: 1, createdAt: -1 });
-  const promotion = candidates.find((item) => isPromotionAvailableByDate(item, now) && promotionAppliesToService(item, serviceName));
+  const availablePromotion = candidates.find((item) => isPromotionAvailableByDate(item, now));
+  const promotion = candidates.find((item) =>
+    isPromotionAvailableByDate(item, now)
+    && selectedServices.some((service) => promotionAppliesToService(item, service.serviceName))
+  );
 
   if (!promotion) {
+    if (availablePromotion && promoCode) {
+      return {
+        valid: false,
+        notApplicable: true,
+        message: "This promo code does not apply to any of the selected services.",
+      };
+    }
     return {
       valid: false,
       message: promoCode
-        ? "Promo code is invalid, expired, inactive, or not applicable to this service."
-        : "No active promotion is available for this service.",
+        ? "Promo code is invalid, expired, or inactive."
+        : "No active promotion is available for these services.",
     };
   }
 
@@ -467,12 +456,11 @@ const validatePromotionForBooking = async ({ patientId, serviceName, servicePric
     }
   }
 
-  const promotionWithResolvedDiscount = {
-    ...(promotion.toObject?.() || promotion),
-    effectiveDiscountType: resolvedDiscount.discountType,
-    effectiveDiscountValue: resolvedDiscount.discountValue,
-  };
-  const price = calculatePromotionPrice(promotionWithResolvedDiscount, servicePrice);
+  const price = calculatePromotionForServices(
+    promotion.toObject?.() || promotion,
+    selectedServices,
+    resolvedDiscount,
+  );
   return {
     valid: true,
     autoApplied: autoApply,
@@ -681,6 +669,7 @@ const sanitizeAppointment = (appointment) => ({
   email: appointment.email,
   service: appointment.service,
   serviceRef: appointment.serviceRef,
+  serviceItems: appointment.serviceItems,
   servicePriceSnapshot: appointment.servicePriceSnapshot,
   serviceDurationSnapshot: appointment.serviceDurationSnapshot,
   promotion: appointment.promotion,
@@ -800,18 +789,21 @@ router.get(
     }
 
     const dentistName = await getClinicDentistName();
-    const selectedServiceName = String(req.query.service || "").trim();
+    const selectedServiceNames = normalizeServiceNames(req.query.services || req.query.service);
     const activeServices = (settings.services || []).filter((item) => item.status !== "inactive");
-    const selectedService = selectedServiceName
-      ? activeServices.find((item) => item.serviceName === selectedServiceName)
-      : null;
+    const selectedServices = selectedServiceNames.map((name) =>
+      activeServices.find((item) => item.serviceName === name)
+    );
 
-    if (selectedServiceName && !selectedService) {
+    if (selectedServices.some((service) => !service)) {
       return res.json({
         slots: [],
         message: "The selected service is no longer available for new appointments.",
       });
     }
+    const selectedService = selectedServices.length
+      ? { duration: selectedServices.reduce((total, service) => total + getServiceDuration(service, settings.appointmentSettings), 0) }
+      : null;
 
     const personalSchedule = req.user.role === "patient"
       ? null
@@ -883,10 +875,10 @@ router.post(
   authenticate,
   authorize("patient"),
   asyncHandler(async (req, res) => {
-    const { service, promoCode, autoApply } = req.body || {};
-    const selectedServiceName = String(service || "").trim();
+    const { service, services, promoCode, autoApply } = req.body || {};
+    const selectedServiceNames = normalizeServiceNames(Array.isArray(services) ? services : service);
 
-    if (!selectedServiceName) {
+    if (!selectedServiceNames.length) {
       return res.status(400).json({
         message: "Please select a dental service before applying a promo code.",
         errors: { service: "Please select a dental service before applying a promo code." },
@@ -898,9 +890,11 @@ router.post(
       Patient.findOne({ userId: req.user.id }),
     ]);
     const activeServices = (settings.services || []).filter((item) => item.status !== "inactive");
-    const selectedService = activeServices.find((item) => item.serviceName === selectedServiceName);
+    const selectedServices = selectedServiceNames.map((name) =>
+      activeServices.find((item) => item.serviceName === name)
+    );
 
-    if (!selectedService) {
+    if (selectedServices.some((selectedService) => !selectedService)) {
       return res.status(400).json({
         message: "The selected service is no longer available for new appointments.",
         errors: { service: "The selected service is no longer available for new appointments." },
@@ -916,8 +910,7 @@ router.post(
 
     const result = await validatePromotionForBooking({
       patientId: patientRecord?._id,
-      serviceName: selectedService.serviceName,
-      servicePrice: selectedService.price,
+      services: selectedServices,
       promoCode,
       autoApply: Boolean(autoApply),
     });
@@ -943,6 +936,7 @@ router.post(
         applicableServices: result.promotion.applicableServices,
         endDate: result.promotion.endDate,
       },
+      eligibleServiceNames: result.eligibleServiceNames,
       originalPrice: result.originalPrice,
       discountAmount: result.discountAmount,
       finalPrice: result.finalPrice,
@@ -962,12 +956,15 @@ router.post(
       appointmentDate,
       appointmentTime,
       service,
+      services,
       promoCode,
       notes,
       reason,
     } = req.body;
 
-    if (!patientName?.trim() || !contactNumber?.trim() || !email?.trim() || !appointmentDate || !appointmentTime || !service?.trim()) {
+    const submittedServiceNames = normalizeServiceNames(Array.isArray(services) ? services : service);
+
+    if (!patientName?.trim() || !contactNumber?.trim() || !email?.trim() || !appointmentDate || !appointmentTime || !submittedServiceNames.length) {
       return res.status(400).json({
         message: "Full name, contact number, email, preferred date, preferred time, and service are required.",
       });
@@ -1021,19 +1018,25 @@ router.post(
       });
     }
 
-    const selectedServiceName = service.trim();
     const activeServices = (settings.services || []).filter((item) => item.status !== "inactive");
-    const selectedService = activeServices.find((item) => item.serviceName === selectedServiceName);
+    const selectedServices = submittedServiceNames.map((name) =>
+      activeServices.find((item) => item.serviceName === name)
+    );
 
-    if (!selectedService) {
+    if (selectedServices.some((selectedService) => !selectedService)) {
       return res.status(400).json({
         message: "The selected service is no longer available for new appointments.",
         errors: { service: "The selected service is no longer available for new appointments." },
       });
     }
 
+    const serviceNames = selectedServices.map((selectedService) => selectedService.serviceName);
+    const appointmentService = serviceNames.join(", ");
     const selectedTimeMinutes = toMinutes(appointmentTime);
-    const serviceDuration = getServiceDuration(selectedService, appointmentSettings);
+    const serviceDuration = selectedServices.reduce(
+      (total, selectedService) => total + getServiceDuration(selectedService, appointmentSettings),
+      0,
+    );
     const buffer = Math.max(Number(appointmentSettings.bufferTime) || 0, 0);
     const closing = toMinutes(appointmentSettings.closingTime);
     const selectedSlotEnd = getSlotEndMinutes(selectedTimeMinutes, serviceDuration, buffer);
@@ -1092,7 +1095,7 @@ router.post(
     const duplicateActiveAppointment = await Appointment.findOne({
       $or: duplicateFilters,
       appointmentDate: parsedDate,
-      service: selectedService.serviceName,
+      service: appointmentService,
       status: { $in: DUPLICATE_ACTIVE_STATUSES },
     }).select("_id");
 
@@ -1103,22 +1106,23 @@ router.post(
       });
     }
 
-    const servicePrice = Number.isFinite(Number(selectedService.price)) ? Number(selectedService.price) : 0;
+    const servicePrice = Math.round(selectedServices.reduce(
+      (total, selectedService) => total + (Number.isFinite(Number(selectedService.price)) ? Number(selectedService.price) : 0),
+      0,
+    ) * 100) / 100;
     const promotionResult = String(promoCode || "").trim()
       ? await validatePromotionForBooking({
           patientId: patientRecord?._id,
-          serviceName: selectedService.serviceName,
-          servicePrice,
+          services: selectedServices,
           promoCode,
         })
       : await validatePromotionForBooking({
           patientId: patientRecord?._id,
-          serviceName: selectedService.serviceName,
-          servicePrice,
+          services: selectedServices,
           autoApply: true,
         });
 
-    if (String(promoCode || "").trim() && !promotionResult.valid) {
+    if (String(promoCode || "").trim() && !promotionResult.valid && !promotionResult.notApplicable) {
       return res.status(400).json({
         message: promotionResult.message,
         errors: { promoCode: promotionResult.message },
@@ -1126,7 +1130,7 @@ router.post(
     }
 
     const appliedPromotion = promotionResult.valid ? promotionResult.promotion : null;
-    const originalPrice = promotionResult.valid ? promotionResult.originalPrice : servicePrice;
+    const originalPrice = servicePrice;
     const discountAmount = promotionResult.valid ? promotionResult.discountAmount : 0;
     const finalPrice = promotionResult.valid ? promotionResult.finalPrice : servicePrice;
 
@@ -1140,10 +1144,16 @@ router.post(
         appointmentDate: parsedDate,
         appointmentTime: appointmentTime.trim(),
         dentistName: normalizedDentistName,
-        service: selectedService.serviceName,
-        serviceRef: selectedService._id,
+        service: appointmentService,
+        serviceRef: selectedServices[0]._id,
+        serviceItems: selectedServices.map((selectedService) => ({
+          serviceName: selectedService.serviceName,
+          serviceRef: selectedService._id,
+          price: Number.isFinite(Number(selectedService.price)) ? Number(selectedService.price) : 0,
+          duration: getServiceDuration(selectedService, appointmentSettings),
+        })),
         servicePriceSnapshot: servicePrice,
-        serviceDurationSnapshot: Number.isFinite(Number(selectedService.duration)) ? Number(selectedService.duration) : undefined,
+        serviceDurationSnapshot: serviceDuration,
         promotion: appliedPromotion?._id,
         promoCode: appliedPromotion?.promoCode,
         promoTitle: appliedPromotion?.title,

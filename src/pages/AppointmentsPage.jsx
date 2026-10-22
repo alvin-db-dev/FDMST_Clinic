@@ -237,20 +237,18 @@ function AppointmentsPage({ allowApproval = false }) {
     if (!appointment) return
 
     let existingRecord = appointment.treatmentRecord
-
-    if (!existingRecord) {
-      try {
-        const response = await fdmstApi.getTreatmentRecords({
-          appointment: appointment.id,
-          scope: 'all',
-          limit: 1,
-        })
-        if (response.data && response.data.length > 0) {
-          existingRecord = response.data[0]
-        }
-      } catch (err) {
-        console.warn('Unable to query existing treatment record:', err)
+    try {
+      // Appointment summaries omit attachments; load the complete record before opening the editor.
+      const response = await fdmstApi.getTreatmentRecords({
+        appointment: appointment.id,
+        scope: isAdmin ? 'all' : 'mine',
+        limit: 1,
+      })
+      if (response.data?.length) {
+        existingRecord = response.data[0]
       }
+    } catch (err) {
+      console.warn('Unable to load the complete treatment record:', err)
     }
 
     if (existingRecord) {
@@ -589,15 +587,17 @@ function AppointmentsPage({ allowApproval = false }) {
     }
   }
 
-  const openClinicalNoteModal = (appointment) => {
+  const openClinicalNoteModal = (appointment, note = null) => {
     setClinicalNoteForm({
       ...emptyClinicalNoteForm,
-      patientName: appointment?.patientName || '',
-      appointment: appointment?.id || '',
-      appointmentDisplay: formatAppointmentId(appointment),
-      visitDate: new Date().toISOString().slice(0, 10),
+      patientName: note?.patientName || appointment?.patientName || '',
+      appointment: note?.appointment?._id || note?.appointment?.id || note?.appointment || appointment?.id || '',
+      appointmentDisplay: note?.appointmentSnapshot?.appointmentId || formatAppointmentId(appointment),
+      visitDate: note?.visitDate ? new Date(note.visitDate).toISOString().slice(0, 10) : new Date().toISOString().slice(0, 10),
+      noteType: note?.noteType || 'Clinical Note',
+      clinicalNotes: { ...emptyClinicalNoteForm.clinicalNotes, ...(note?.clinicalNotes || {}) },
     })
-    setClinicalNoteModal({ appointment })
+    setClinicalNoteModal({ appointment, note })
     setDocumentationPrompt(null)
   }
 
@@ -639,16 +639,31 @@ function AppointmentsPage({ allowApproval = false }) {
 
     setIsSavingClinicalNote(true)
     try {
-      const response = await fdmstApi.createClinicalNote({
+      const payload = {
         patientName: clinicalNoteForm.patientName,
         appointment: clinicalNoteForm.appointment,
         visitDate: clinicalNoteForm.visitDate,
         noteType: clinicalNoteForm.noteType,
         clinicalNotes: clinicalNoteForm.clinicalNotes,
         followUp: clinicalNoteForm.followUp,
-      })
+      }
+      const response = clinicalNoteModal?.note
+        ? await fdmstApi.updateClinicalNote(clinicalNoteModal.note.id || clinicalNoteModal.note._id, payload)
+        : await fdmstApi.createClinicalNote(payload)
       toast.success(response.message || 'Clinical note created.')
       if (response.warning) toast.error(response.warning)
+      if (clinicalNoteModal?.note && response.data) {
+        setQuickActionModal((current) => current?.type === 'clinical'
+          ? {
+              ...current,
+              data: current.data.map((note) => (
+                String(note.id || note._id) === String(response.data.id || response.data._id)
+                  ? response.data
+                  : note
+              )),
+            }
+          : current)
+      }
       setClinicalNoteModal(null)
       setClinicalNoteForm(emptyClinicalNoteForm)
     } catch (error) {
@@ -1194,9 +1209,20 @@ function AppointmentsPage({ allowApproval = false }) {
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Appointment Data</p>
                 <h2 className="mt-1 text-xl font-semibold text-sky-950">{quickActionModal.title}</h2>
               </div>
-              <button type="button" onClick={() => setQuickActionModal(null)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" aria-label="Close quick action modal">
-                <FaTimes />
-              </button>
+              <div className="flex items-center gap-2">
+                {quickActionModal.type === 'clinical' ? (
+                  <button
+                    type="button"
+                    onClick={() => openClinicalNoteModal(quickActionModal.appointment)}
+                    className="h-10 rounded-xl bg-sky-950 px-4 text-sm font-bold text-white hover:bg-sky-900"
+                  >
+                    Add Clinical Note
+                  </button>
+                ) : null}
+                <button type="button" onClick={() => setQuickActionModal(null)} className="grid h-10 w-10 place-items-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50" aria-label="Close quick action modal">
+                  <FaTimes />
+                </button>
+              </div>
             </div>
             <div className="max-h-[76vh] overflow-y-auto p-5">
               {quickActionModal.isLoading ? (
@@ -1286,6 +1312,16 @@ function AppointmentsPage({ allowApproval = false }) {
                           </p>
                           <p className="mt-1 text-sm text-slate-500">{formatDate(note.visitDate || note.createdAt)} • {note.createdByName || note.dentistName || 'Provider not recorded'}</p>
                         </div>
+                        {String(note.createdBy?.id || note.createdBy?._id || note.createdBy || '') === String(currentUser?.id || currentUser?._id || '')
+                          || String(note.createdByEmail || '').toLowerCase() === String(currentUser?.email || '').toLowerCase() ? (
+                            <button
+                              type="button"
+                              onClick={() => openClinicalNoteModal(quickActionModal.appointment, note)}
+                              className="h-9 shrink-0 rounded-lg border border-slate-200 px-3 text-xs font-bold text-sky-950 hover:bg-sky-50"
+                            >
+                              Edit Note
+                            </button>
+                          ) : null}
                       </div>
                       <div className="mt-3 grid gap-2 text-sm text-slate-600">
                         <p>Observation: <span className="font-semibold text-sky-950">{note.clinicalNotes?.observation || 'Not recorded'}</span></p>
@@ -1463,7 +1499,7 @@ function AppointmentsPage({ allowApproval = false }) {
           <section className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[1.5rem] bg-white shadow-xl" onClick={(event) => event.stopPropagation()}>
             <div className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-6 py-5">
               <div>
-                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">New Note Clinical Note</p>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">{clinicalNoteModal.note ? 'Edit Clinical Note' : 'New Clinical Note'}</p>
                 <h2 className="mt-1 text-xl font-bold text-sky-950">{clinicalNoteForm.patientName || 'Clinical Note'}</h2>
                 <p className="mt-1 text-sm text-slate-500">Private internal documentation. Patients cannot view this note.</p>
               </div>
@@ -1498,7 +1534,7 @@ function AppointmentsPage({ allowApproval = false }) {
                 Recommendations
                 <textarea className={`${inputClass} min-h-24 py-3`} value={clinicalNoteForm.clinicalNotes.recommendations} onChange={(event) => updateClinicalNoteContent('recommendations', event.target.value)} placeholder="Document recommendations or follow-up instructions..." />
               </label>
-              <section className="rounded-2xl border border-sky-100 bg-sky-50 p-4 lg:col-span-3">
+              {!clinicalNoteModal.note ? <section className="rounded-2xl border border-sky-100 bg-sky-50 p-4 lg:col-span-3">
                 <label className="flex items-center gap-3 text-sm font-bold text-sky-950">
                   <input
                     type="checkbox"
@@ -1556,7 +1592,11 @@ function AppointmentsPage({ allowApproval = false }) {
                     ) : null}
                   </div>
                 ) : null}
-              </section>
+              </section> : (
+                <p className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-sm text-sky-900 lg:col-span-3">
+                  Editing this note will not change an existing return appointment booking.
+                </p>
+              )}
               <label className="grid gap-2 text-sm font-bold text-slate-600 lg:col-span-3">
                 Additional Notes
                 <textarea className={`${inputClass} min-h-24 py-3`} value={clinicalNoteForm.clinicalNotes.additionalNotes} onChange={(event) => updateClinicalNoteContent('additionalNotes', event.target.value)} placeholder="Internal reminders or supporting context..." />
@@ -1566,7 +1606,7 @@ function AppointmentsPage({ allowApproval = false }) {
             <div className="flex flex-col gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
               <button type="button" className="h-11 rounded-xl border border-slate-200 px-5 text-sm font-bold text-slate-600 hover:bg-slate-50 disabled:opacity-60" disabled={isSavingClinicalNote} onClick={closeClinicalNoteModal}>Cancel</button>
               <button type="button" className="h-11 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900 disabled:opacity-60" disabled={isSavingClinicalNote} onClick={saveClinicalNote}>
-                {isSavingClinicalNote ? 'Saving...' : 'Create Clinical Note'}
+                {isSavingClinicalNote ? 'Saving...' : clinicalNoteModal.note ? 'Save Changes' : 'Create Clinical Note'}
               </button>
             </div>
           </section>
@@ -1589,6 +1629,8 @@ function AppointmentsPage({ allowApproval = false }) {
           onSubmit={saveTreatmentRecord}
           isSaving={isSavingTreatment}
           canEdit={true}
+          xrayOnlyUpload
+          canEditPatientAllergies={isAdmin}
         />
       ) : null}
     </main>

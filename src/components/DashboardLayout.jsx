@@ -520,7 +520,7 @@ function DashboardLayout({ portalLabel, navItems }) {
           </button>
         </div>
 
-        <nav className="flex flex-1 flex-col overflow-y-auto px-3 py-3 lg:overflow-hidden">
+        <nav className="flex flex-1 flex-col overflow-y-auto px-3 py-3">
           {sidebarSections.map((section) => (
             <div key={section.title} className={section.title === 'Account' ? 'mt-auto pt-2' : 'mb-2'}>
               <p className="mb-1 px-3 text-[0.62rem] font-bold uppercase tracking-[0.16em] text-slate-400 transition-all duration-300 lg:h-0 lg:overflow-hidden lg:opacity-0 lg:group-hover/sidebar:h-4 lg:group-hover/sidebar:opacity-100">

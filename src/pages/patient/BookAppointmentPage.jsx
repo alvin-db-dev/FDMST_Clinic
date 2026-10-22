@@ -205,7 +205,7 @@ function BookAppointmentPage() {
     appointmentDate: '',
     appointmentTime: '',
     dentistName: '',
-    service: '',
+    services: [],
     notes: '',
     reason: '',
     promoCode: '',
@@ -270,9 +270,24 @@ function BookAppointmentPage() {
 
     return configuredServices || []
   }, [clinicSettings])
-  const selectedService = useMemo(
-    () => availableServices.find((service) => service.serviceName === form.service) || null,
-    [availableServices, form.service],
+  const selectedServices = useMemo(
+    () => availableServices.filter((service) => form.services.includes(service.serviceName)),
+    [availableServices, form.services],
+  )
+  const selectedServiceNames = useMemo(
+    () => selectedServices.map((service) => service.serviceName),
+    [selectedServices],
+  )
+  const selectedServicePrice = useMemo(
+    () => selectedServices.reduce((total, service) => total + (Number.isFinite(Number(service.price)) ? Number(service.price) : 0), 0),
+    [selectedServices],
+  )
+  const selectedServiceDuration = useMemo(
+    () => selectedServices.reduce(
+      (total, service) => total + (Number(service.duration) > 0 ? Number(service.duration) : Number(appointmentSettings.appointmentDuration) || 30),
+      0,
+    ),
+    [appointmentSettings.appointmentDuration, selectedServices],
   )
   const fallbackTimeSlots = useMemo(
     () => generateTimeSlots(appointmentSettings, timeFormat),
@@ -282,7 +297,7 @@ function BookAppointmentPage() {
     ],
   )
   const priceSummary = useMemo(() => {
-    const originalPrice = selectedService && Number.isFinite(Number(selectedService.price)) ? Number(selectedService.price) : 0
+    const originalPrice = selectedServicePrice
 
     if (appliedPromo?.valid) {
       return {
@@ -297,7 +312,7 @@ function BookAppointmentPage() {
       discountAmount: 0,
       finalPrice: originalPrice,
     }
-  }, [appliedPromo, selectedService])
+  }, [appliedPromo, selectedServicePrice])
   const formattedSelectedDate = useMemo(() => {
     if (!form.appointmentDate) return 'Not selected'
     const date = new Date(`${form.appointmentDate}T00:00:00`)
@@ -311,16 +326,16 @@ function BookAppointmentPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(location.search)
-    const service = params.get('service')
+    const services = params.getAll('service').filter(Boolean)
     const promoCode = params.get('promoCode')
     const date = params.get('date') || params.get('appointmentDate')
 
-    if (!service && !promoCode && !date) return
+    if (!services.length && !promoCode && !date) return
 
     const timeoutId = window.setTimeout(() => {
       setForm((currentForm) => ({
         ...currentForm,
-        service: service || currentForm.service,
+        services: services.length ? services : currentForm.services,
         promoCode: promoCode || currentForm.promoCode,
         appointmentDate: date || currentForm.appointmentDate,
       }))
@@ -459,7 +474,7 @@ function BookAppointmentPage() {
         const response = await fdmstApi.getAppointmentAvailability({
           date: form.appointmentDate,
           dentistName: form.dentistName,
-          service: form.service,
+          services: selectedServiceNames,
         })
 
         if (!isMounted || availabilityRequestRef.current !== requestId) return
@@ -494,7 +509,7 @@ function BookAppointmentPage() {
   }, [
     form.appointmentDate,
     form.dentistName,
-    form.service,
+    selectedServiceNames,
     minDate,
     maxDate,
     appointmentSettings,
@@ -518,13 +533,13 @@ function BookAppointmentPage() {
       setAppliedPromo(null)
       setPromoMessage('')
 
-      if (!form.service || !selectedService) return
+      if (!selectedServiceNames.length || selectedServiceNames.length !== form.services.length) return
 
       setIsApplyingPromo(true)
 
       try {
         const response = await fdmstApi.validateAppointmentPromo({
-          service: form.service,
+          services: selectedServiceNames,
           promoCode: manualCode,
           autoApply: !manualCode,
         })
@@ -533,9 +548,6 @@ function BookAppointmentPage() {
 
         if (response.valid) {
           setAppliedPromo(response)
-          setForm((currentForm) => currentForm.promoCode
-            ? currentForm
-            : { ...currentForm, promoCode: response.promotion?.promoCode || '' })
           setPromoMessage(response.message || 'Promotion applied.')
         } else if (manualCode) {
           setPromoMessage(response.message || 'Promo code could not be applied.')
@@ -551,7 +563,7 @@ function BookAppointmentPage() {
     }, manualCode ? 350 : 150)
 
     return () => window.clearTimeout(timeoutId)
-  }, [form.service, form.promoCode, selectedService])
+  }, [form.services, form.promoCode, selectedServiceNames])
 
   const handleChange = useCallback((event) => {
     const { name, value } = event.target
@@ -567,6 +579,24 @@ function BookAppointmentPage() {
       [name]: '',
     }))
   }, [])
+
+  const handleServiceToggle = useCallback((serviceName) => {
+    setForm((currentForm) => {
+      const nextServices = currentForm.services.includes(serviceName)
+        ? currentForm.services.filter((name) => name !== serviceName)
+        : [...currentForm.services, serviceName]
+
+      return {
+        ...currentForm,
+        services: nextServices,
+        appointmentTime: '',
+        ...(appliedPromo?.autoApplied ? { promoCode: '' } : {}),
+      }
+    })
+    setAppliedPromo(null)
+    setPromoMessage('')
+    setFieldErrors((currentErrors) => ({ ...currentErrors, service: '' }))
+  }, [appliedPromo])
 
   const validateBookingForm = () => {
     const mobileError = validateMobileNumber(form.contactNumber, { required: true })
@@ -586,9 +616,9 @@ function BookAppointmentPage() {
     const timeError = !form.appointmentTime
       ? 'Please select an available appointment time.'
       : ''
-    const serviceError = !form.service
+    const serviceError = !form.services.length
       ? 'Please select a dental service.'
-      : !selectedService
+      : selectedServices.length !== form.services.length
         ? 'The selected service is no longer available.'
         : ''
     const unavailableTimeError = form.appointmentTime && bookableTimeSlots.length && !bookableTimeSlots.includes(form.appointmentTime)
@@ -676,7 +706,7 @@ function BookAppointmentPage() {
         appointmentDate: '',
         appointmentTime: '',
         dentistName: '',
-        service: '',
+        services: [],
         promoCode: '',
         notes: '',
         reason: '',
@@ -775,7 +805,7 @@ function BookAppointmentPage() {
               <SectionHeader
                 icon={FaRegCalendarAlt}
                 title="Appointment Schedule"
-                description="Choose your preferred visit date, time, and dental service."
+                description="Choose your preferred visit date, time, and dental services."
               />
               <div className="grid gap-5 md:grid-cols-2">
                 <Field label="Preferred Date" icon={FaRegCalendarAlt} error={fieldErrors.appointmentDate}>
@@ -817,22 +847,30 @@ function BookAppointmentPage() {
                   </div>
                 </Field>
 
-                <Field label="Service" icon={FaTooth} error={fieldErrors.service}>
-                  <select
-                    className={iconInputClass}
-                    name="service"
-                    value={form.service}
-                    onChange={handleChange}
-                    disabled={!availableServices.length}
-                    required
-                  >
-                    <option value="">Select a dental service</option>
+                <Field label="Services" icon={FaTooth} error={fieldErrors.service}>
+                  <div className="max-h-56 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-white p-3">
                     {availableServices.map((service) => (
-                      <option key={service.id || service.serviceName} value={service.serviceName}>
-                        {service.serviceName}
-                      </option>
+                      <label
+                        key={service.id || service.serviceName}
+                        className="flex cursor-pointer items-start gap-3 rounded-lg px-3 py-2 text-sm transition hover:bg-sky-50"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={form.services.includes(service.serviceName)}
+                          onChange={() => handleServiceToggle(service.serviceName)}
+                          disabled={!availableServices.length}
+                          className="mt-0.5 h-4 w-4 rounded border-slate-300 text-sky-950 focus:ring-sky-700"
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="block font-semibold text-slate-800">{service.serviceName}</span>
+                          <span className="mt-0.5 block text-xs text-slate-500">
+                            {formatServicePrice(service.price)}{Number(service.duration) > 0 ? ` | ${formatServiceDuration(service.duration)}` : ''}
+                          </span>
+                        </span>
+                      </label>
                     ))}
-                  </select>
+                  </div>
+                  <p className="mt-1 text-xs text-slate-500">Select one or more services for this appointment.</p>
                 </Field>
 
                 <Field label="Promo Code" icon={FaGift} error={fieldErrors.promoCode}>
@@ -855,7 +893,7 @@ function BookAppointmentPage() {
                   No active dental services are available for online booking right now.
                 </div>
               ) : null}
-              {form.service ? (
+              {form.services.length ? (
                 <div className="grid gap-3 rounded-2xl border border-sky-100 bg-sky-50/70 p-4 lg:grid-cols-3">
                   <div className="flex items-center gap-3">
                     <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white text-sky-950 ring-1 ring-sky-100">
@@ -863,7 +901,7 @@ function BookAppointmentPage() {
                     </span>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Estimated Price</p>
-                      <p className="mt-1 text-sm font-semibold text-sky-950">{selectedService ? formatServicePrice(selectedService.price) : 'Price unavailable'}</p>
+                      <p className="mt-1 text-sm font-semibold text-sky-950">{formatServicePrice(selectedServicePrice)}</p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
@@ -872,7 +910,7 @@ function BookAppointmentPage() {
                     </span>
                     <div>
                       <p className="text-xs font-semibold uppercase tracking-[0.14em] text-slate-400">Estimated Duration</p>
-                      <p className="mt-1 text-sm font-semibold text-sky-950">{selectedService ? formatServiceDuration(selectedService.duration) : 'Duration not specified'}</p>
+                      <p className="mt-1 text-sm font-semibold text-sky-950">{formatServiceDuration(selectedServiceDuration)}</p>
                     </div>
                   </div>
                   <div className="rounded-xl bg-white p-3 ring-1 ring-sky-100 lg:col-span-1">
@@ -891,6 +929,11 @@ function BookAppointmentPage() {
                         <p className="font-semibold text-sky-950">{appliedPromo.promotion?.title}</p>
                         <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">{appliedPromo.promotion?.promoCode}</p>
                         <p className="text-xs font-semibold text-emerald-700">{formatPromoDiscount(appliedPromo.promotion)}</p>
+                        {Array.isArray(appliedPromo.eligibleServiceNames) && appliedPromo.eligibleServiceNames.length ? (
+                          <p className="text-xs text-slate-500">
+                            Discount applies to: {appliedPromo.eligibleServiceNames.join(', ')}
+                          </p>
+                        ) : null}
                         <div className="flex items-center justify-between text-slate-500">
                           <span>Original Price</span>
                           <span className="line-through">{currencyFormatter.format(priceSummary.originalPrice)}</span>
@@ -936,7 +979,7 @@ function BookAppointmentPage() {
                     <div>
                       <p className="text-sm font-semibold text-sky-950">Availability Preview</p>
                       <p className="mt-1 text-sm text-slate-500">
-                        {formatDentistName(form.dentistName || dentists[0]?.name)} | {formattedSelectedDate} | {form.service || 'Select a service'}
+                        {formatDentistName(form.dentistName || dentists[0]?.name)} | {formattedSelectedDate} | {selectedServiceNames.join(', ') || 'Select services'}
                       </p>
                     </div>
                     <span className="inline-flex rounded-full bg-sky-50 px-3 py-1 text-xs font-semibold text-sky-700 ring-1 ring-sky-100">
@@ -1037,11 +1080,11 @@ function BookAppointmentPage() {
             </div>
             <div className="p-6 sm:p-8">
               <dl className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-3">
-                <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Service</dt><dd className="mt-1 font-semibold text-sky-950">{reviewData.service}</dd></div>
+                <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Services</dt><dd className="mt-1 font-semibold text-sky-950">{reviewData.services?.join(', ')}</dd></div>
                 <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Dentist</dt><dd className="mt-1 font-semibold text-sky-950">{formatDentistName(reviewData.dentistName || dentists[0]?.name)}</dd></div>
                 <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Date</dt><dd className="mt-1 font-semibold text-sky-950">{formattedSelectedDate}</dd></div>
                 <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Time</dt><dd className="mt-1 font-semibold text-sky-950">{reviewData.appointmentTime || 'Not selected'}</dd></div>
-                <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Duration</dt><dd className="mt-1 font-semibold text-sky-950">{selectedService ? formatServiceDuration(selectedService.duration) : 'Duration not specified'}</dd></div>
+                <div className="rounded-2xl bg-slate-50 p-4"><dt className="font-semibold text-slate-900">Duration</dt><dd className="mt-1 font-semibold text-sky-950">{formatServiceDuration(selectedServiceDuration)}</dd></div>
                 {reviewData.reason.trim() ? (
                   <div className="rounded-2xl bg-slate-50 p-4 sm:col-span-2 xl:col-span-3">
                     <dt className="font-semibold text-slate-900">Reason for Visit</dt>

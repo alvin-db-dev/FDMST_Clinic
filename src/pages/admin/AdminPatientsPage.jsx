@@ -4,6 +4,7 @@ import {
   FaEdit,
   FaEnvelope,
   FaEye,
+  FaFileInvoiceDollar,
   FaMapMarkerAlt,
   FaNotesMedical,
   FaPhone,
@@ -20,7 +21,9 @@ import {
   FaVenusMars,
 } from 'react-icons/fa'
 import { fdmstApi } from '../../api/fdmstApi.js'
+import AppointmentReceiptModal from '../../components/AppointmentReceiptModal.jsx'
 import { inputClass } from '../../components/AdminUi.jsx'
+import ClinicalAttachmentUrl from '../../components/ClinicalAttachmentUrl.jsx'
 import DentalChart from '../../components/DentalChart.jsx'
 import PasswordField from '../../components/PasswordField.jsx'
 import { useToast } from '../../context/ToastContext.jsx'
@@ -153,6 +156,11 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   const [form, setForm] = useState(initialForm)
   const [editingId, setEditingId] = useState('')
   const [selectedPatient, setSelectedPatient] = useState(null)
+  const [selectedVisitSummary, setSelectedVisitSummary] = useState(null)
+  const [isLoadingVisitDetails, setIsLoadingVisitDetails] = useState(false)
+  const [receiptAppointment, setReceiptAppointment] = useState(null)
+  const [selectedClinicalNotes, setSelectedClinicalNotes] = useState([])
+  const [isLoadingPatientHistory, setIsLoadingPatientHistory] = useState(false)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [genderFilter, setGenderFilter] = useState('all')
@@ -162,7 +170,6 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   const [isConfirming, setIsConfirming] = useState(false)
   const [adminPassword, setAdminPassword] = useState('')
   const [confirmation, setConfirmation] = useState(initialConfirmation)
-  const [selectedRecord, setSelectedRecord] = useState(null)
   const [fieldErrors, setFieldErrors] = useState({})
   const [isDrawerOpen, setIsDrawerOpen] = useState(quickCreate)
 
@@ -240,39 +247,122 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   )
 
   useEffect(() => {
-    setSelectedRecord(null)
-    if (!selectedPatient?._id && !selectedPatient?.id) return
+    setSelectedVisitSummary(null)
+    setReceiptAppointment(null)
+    setSelectedClinicalNotes([])
+    if (!selectedPatient?._id && !selectedPatient?.id) {
+      setIsLoadingPatientHistory(false)
+      return
+    }
     let isMounted = true
     const patientId = selectedPatient._id || selectedPatient.id
-    fdmstApi.getTreatmentRecords({ patient: patientId, limit: 100 })
-      .then((res) => {
-        if (!isMounted || !res?.data) return
+    setIsLoadingPatientHistory(true)
+    Promise.all([
+      fdmstApi.getTreatmentRecords({ patient: patientId, limit: 100 }),
+      fdmstApi.getClinicalNotes({ patient: patientId, limit: 100 }),
+    ])
+      .then(([treatmentResponse, noteResponse]) => {
+        if (!isMounted) return
+        const treatmentRecords = treatmentResponse?.data || []
         setRecords((prev) => {
           const map = new Map(prev.map((r) => [String(r._id || r.id), r]))
-          res.data.forEach((r) => {
+          treatmentRecords.forEach((r) => {
             const id = String(r._id || r.id)
             map.set(id, { ...map.get(id), ...r, _id: r._id || r.id })
           })
           return Array.from(map.values())
         })
+        setSelectedClinicalNotes(noteResponse?.data || [])
       })
-      .catch(() => {})
+      .catch((error) => {
+        if (isMounted) toast.error(error.message || 'Unable to load this patient’s clinical history.')
+      })
+      .finally(() => {
+        if (isMounted) setIsLoadingPatientHistory(false)
+      })
     return () => {
       isMounted = false
     }
-  }, [selectedPatient])
+  }, [selectedPatient, toast])
 
-  const combinedPatientToothColors = useMemo(() => {
-    const combined = {}
-    selectedRecords.forEach((record) => {
-      if (record.recordType === 'clinical_note') return
-      const map = record.toothColorMap instanceof Map
-        ? Object.fromEntries(record.toothColorMap)
-        : (record.toothColorMap || {})
-      Object.assign(combined, map)
+  const selectedVisitNotes = useMemo(() => {
+    if (!selectedVisitSummary) return []
+    const visitDate = String(selectedVisitSummary.visitDate || selectedVisitSummary.createdAt || '').slice(0, 10)
+    const visitAppointmentId = String(
+      selectedVisitSummary.appointment?._id
+      || selectedVisitSummary.appointment?.id
+      || selectedVisitSummary.appointment
+      || selectedVisitSummary.appointmentSnapshot?._id
+      || selectedVisitSummary.appointmentSnapshot?.id
+      || '',
+    )
+    return selectedClinicalNotes.filter((note) => {
+      const noteAppointmentId = String(
+        note.appointment?._id
+        || note.appointment?.id
+        || note.appointment
+        || note.appointmentSnapshot?._id
+        || note.appointmentSnapshot?.id
+        || '',
+      )
+      const noteDate = String(note.visitDate || note.createdAt || '').slice(0, 10)
+      return (visitAppointmentId && noteAppointmentId === visitAppointmentId)
+        || (visitDate && noteDate === visitDate)
     })
-    return combined
-  }, [selectedRecords])
+  }, [selectedClinicalNotes, selectedVisitSummary])
+
+  const selectedVisitAppointment = useMemo(() => {
+    if (!selectedVisitSummary) return null
+    const visitAppointmentId = String(
+      selectedVisitSummary.appointment?._id
+      || selectedVisitSummary.appointment?.id
+      || selectedVisitSummary.appointment
+      || selectedVisitSummary.appointmentSnapshot?._id
+      || selectedVisitSummary.appointmentSnapshot?.id
+      || '',
+    )
+    return selectedAppointments.find((appointment) => (
+      visitAppointmentId
+      && [appointment._id, appointment.id, appointment.appointmentId].some((id) => String(id || '') === visitAppointmentId)
+    )) || selectedAppointments.find((appointment) => (
+      String(appointment.appointmentDate || '').slice(0, 10)
+      === String(selectedVisitSummary.visitDate || selectedVisitSummary.createdAt || '').slice(0, 10)
+    )) || selectedVisitSummary.appointmentSnapshot || null
+  }, [selectedAppointments, selectedVisitSummary])
+
+  const selectedVisitAttachments = useMemo(() => {
+    const attachments = [
+      ...(selectedVisitSummary?.attachments || []),
+      ...selectedVisitNotes.flatMap((note) => note.attachments || []),
+    ]
+    const uniqueAttachments = new Map()
+    attachments.forEach((attachment, index) => {
+      const key = String(attachment.id || attachment._id || attachment.path || attachment.url || `${attachment.name || 'attachment'}-${index}`)
+      if (!uniqueAttachments.has(key)) uniqueAttachments.set(key, attachment)
+    })
+    return Array.from(uniqueAttachments.values())
+  }, [selectedVisitNotes, selectedVisitSummary])
+
+  const openVisitSummary = async (record) => {
+    setSelectedVisitSummary(record)
+    setIsLoadingVisitDetails(true)
+    try {
+      const response = await fdmstApi.getTreatmentRecord(record._id || record.id)
+      const fullRecord = response?.data
+      if (fullRecord) {
+        const recordId = String(record._id || record.id)
+        setSelectedVisitSummary((current) => (
+          current && String(current._id || current.id) === recordId
+            ? { ...current, ...fullRecord }
+            : current
+        ))
+      }
+    } catch (error) {
+      toast.error(error.message || 'Unable to load complete treatment details.')
+    } finally {
+      setIsLoadingVisitDetails(false)
+    }
+  }
 
   const patientTreatments = useMemo(
     () => selectedRecords.filter((item) => item.recordType !== 'clinical_note'),
@@ -603,50 +693,6 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                   <p>Registered: {formatDateTime(selectedPatient.createdAt)}</p>
                 </div>
               </section>
-              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
-                {selectedRecord ? (
-                  <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sky-200 bg-sky-50 px-4 py-3">
-                    <div className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-sky-950 text-white">
-                        <FaTooth className="h-4 w-4" />
-                      </span>
-                      <div>
-                        <p className="text-sm font-bold text-sky-950">
-                          Viewing treatment from {selectedRecord.visitDate ? new Date(selectedRecord.visitDate).toLocaleDateString() : '—'}
-                        </p>
-                        <p className="text-xs text-slate-500">
-                          {selectedRecord.procedure || selectedRecord.treatment || selectedRecord.servicePerformed || 'Treatment'} • {selectedRecord.dentistName || selectedRecord.createdByName || 'No dentist listed'}
-                          {selectedRecord.toothNumber ? ` • Tooth #${selectedRecord.toothNumber}` : ''}
-                        </p>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRecord(null)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-bold text-slate-600 transition hover:bg-slate-50 hover:text-sky-950"
-                    >
-                      <FaTimes className="h-3 w-3" /> Show All Records
-                    </button>
-                  </div>
-                ) : null}
-                <DentalChart
-                  records={selectedRecord ? [selectedRecord] : selectedRecords}
-                  selectedTooth={selectedRecord ? (selectedRecord.toothNumber || '') : ''}
-                  initialToothColors={
-                    selectedRecord
-                      ? (selectedRecord.toothColorMap instanceof Map
-                          ? Object.fromEntries(selectedRecord.toothColorMap)
-                          : (selectedRecord.toothColorMap || {}))
-                      : combinedPatientToothColors
-                  }
-                  interactive={false}
-                  title={
-                    selectedRecord
-                      ? `Dental Diagram — ${fullName(selectedPatient)} (${selectedRecord.visitDate ? new Date(selectedRecord.visitDate).toLocaleDateString() : 'Record'})`
-                      : `Dental Odontogram — ${fullName(selectedPatient)}`
-                  }
-                />
-              </section>
               <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Appointment History</h3>{selectedAppointments.length ? selectedAppointments.map((item) => <p key={item.id} className="mt-2 text-sm text-slate-600">{new Date(item.appointmentDate).toLocaleDateString()} • {item.service} • {item.status}</p>) : <p className="mt-3 text-sm text-slate-500">No appointments found.</p>}</section>
               <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Clinical Notes</h3>{selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).length ? selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).map((item) => <p key={item._id} className="mt-2 text-sm text-slate-600">{new Date(item.visitDate || item.createdAt).toLocaleDateString()} • {item.noteType || 'Clinical Note'} • {item.createdByName || item.dentistName || 'Provider'}</p>) : <p className="mt-3 text-sm text-slate-500">No clinical notes found.</p>}</section>
               <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
@@ -654,24 +700,14 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                   <div>
                     <h3 className="font-semibold text-sky-950">Treatment Records</h3>
                     <p className="mt-0.5 text-xs text-slate-500">
-                      Click any record below to show its treated teeth and diagram colors on the chart above.
+                  Click a record to open its visit summary and related documents.
                     </p>
                   </div>
-                  {selectedRecord ? (
-                    <button
-                      type="button"
-                      onClick={() => setSelectedRecord(null)}
-                      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1 text-xs font-bold text-slate-600 hover:bg-slate-100"
-                    >
-                      <FaTimes className="h-3 w-3" /> Reset View
-                    </button>
-                  ) : null}
                 </div>
 
                 <div className="mt-3 grid gap-2.5">
                   {patientTreatments.length ? (
                     patientTreatments.map((item) => {
-                      const isActive = (selectedRecord?._id && selectedRecord._id === item._id) || (selectedRecord?.id && selectedRecord.id === item.id)
                       const dateStr = item.visitDate ? new Date(item.visitDate).toLocaleDateString() : (item.createdAt ? new Date(item.createdAt).toLocaleDateString() : '—')
                       const procedureStr = item.procedure || item.treatment || item.servicePerformed || 'Treatment'
                       const dentistStr = item.dentistName || item.createdByName || 'No dentist listed'
@@ -679,20 +715,20 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                       return (
                         <div
                           key={item._id || item.id}
-                          onClick={() => setSelectedRecord(isActive ? null : item)}
-                          className={`group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border p-3.5 transition cursor-pointer ${
-                            isActive
-                              ? 'border-sky-500 bg-sky-50/90 ring-2 ring-sky-300 shadow-xs'
-                              : 'border-slate-200 bg-white hover:border-sky-300 hover:bg-slate-50/80'
-                          }`}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => openVisitSummary(item)}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter' || event.key === ' ') {
+                              event.preventDefault()
+                              openVisitSummary(item)
+                            }
+                          }}
+                          className="group flex flex-col sm:flex-row sm:items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white p-3.5 transition cursor-pointer hover:border-sky-300 hover:bg-slate-50/80"
                         >
                           <div className="flex items-start sm:items-center gap-3">
                             <span
-                              className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl transition ${
-                                isActive
-                                  ? 'bg-sky-950 text-white shadow-xs'
-                                  : 'bg-slate-100 text-slate-500 group-hover:bg-sky-100 group-hover:text-sky-900'
-                              }`}
+                              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-500 transition group-hover:bg-sky-100 group-hover:text-sky-900"
                             >
                               <FaTooth className="h-4 w-4" />
                             </span>
@@ -730,15 +766,9 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                           </div>
 
                           <div className="flex items-center gap-2 shrink-0 self-end sm:self-auto">
-                            {isActive ? (
-                              <span className="inline-flex items-center gap-1.5 rounded-lg bg-sky-950 px-3 py-1.5 text-xs font-bold text-white shadow-xs">
-                                <FaEye className="h-3 w-3" /> Showing on Diagram
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition group-hover:border-sky-300 group-hover:bg-sky-50 group-hover:text-sky-950">
-                                <FaEye className="h-3 w-3 text-slate-400 group-hover:text-sky-700" /> View on Diagram
-                              </span>
-                            )}
+                            <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 transition group-hover:border-sky-300 group-hover:bg-sky-50 group-hover:text-sky-950">
+                              <FaEye className="h-3 w-3 text-slate-400 group-hover:text-sky-700" /> View Visit Summary
+                            </span>
                           </div>
                         </div>
                       )
@@ -751,6 +781,179 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
             </div>
           </div>
         </div>
+      ) : null}
+
+      {selectedVisitSummary && selectedPatient ? (
+        <div
+          className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/50 px-4 py-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Patient visit summary"
+          onClick={() => setSelectedVisitSummary(null)}
+        >
+          <section
+            className="max-h-[92vh] w-full max-w-5xl overflow-y-auto rounded-[1.5rem] bg-white shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-slate-100 bg-white px-6 py-5">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.2em] text-slate-400">Patient Visit Summary</p>
+                <h2 className="mt-1 text-xl font-bold text-sky-950">{fullName(selectedPatient)}</h2>
+                <p className="mt-1 text-sm text-slate-500">
+                  {selectedVisitSummary.visitDate || selectedVisitSummary.createdAt
+                    ? new Date(selectedVisitSummary.visitDate || selectedVisitSummary.createdAt).toLocaleDateString()
+                    : 'Visit date not recorded'}
+                  {' • '}
+                  {selectedVisitSummary.procedure || selectedVisitSummary.treatment || selectedVisitSummary.servicePerformed || 'Treatment'}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedVisitSummary(null)}
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-xl border border-slate-200 text-slate-500 hover:bg-slate-50"
+                aria-label="Close visit summary"
+              >
+                <FaTimes />
+              </button>
+            </header>
+
+            <div className="grid gap-4 p-5 sm:p-6 lg:grid-cols-2">
+              <section className="rounded-2xl bg-slate-50 p-4">
+                <h3 className="font-semibold text-sky-950">Treatment Record</h3>
+                <div className="mt-3 grid gap-2 text-sm text-slate-600">
+                  {isLoadingVisitDetails ? <p className="text-xs text-slate-500">Loading full treatment details...</p> : null}
+                  <p>Procedure: <span className="font-semibold text-slate-800">{selectedVisitSummary.procedure || selectedVisitSummary.treatment || selectedVisitSummary.servicePerformed || 'Not recorded'}</span></p>
+                  <p>Status: <span className="font-semibold text-slate-800">{String(selectedVisitSummary.treatmentStatus || 'Not recorded').replaceAll('_', ' ')}</span></p>
+                  <p>Dentist: <span className="font-semibold text-slate-800">{selectedVisitSummary.dentistName || selectedVisitSummary.createdByName || 'Not recorded'}</span></p>
+                  <p>Tooth: <span className="font-semibold text-slate-800">{selectedVisitSummary.toothNumber ? `#${selectedVisitSummary.toothNumber}` : 'Not specified'}</span></p>
+                  <p>Diagnostic: <span className="font-semibold text-slate-800">{selectedVisitSummary.diagnosis || selectedVisitSummary.diagnostic || 'Not recorded'}</span></p>
+                  <p>Materials Used: <span className="font-semibold text-slate-800">{selectedVisitSummary.materialsUsed || 'Not recorded'}</span></p>
+                  <p>Treatment Description: <span className="font-semibold text-slate-800">{selectedVisitSummary.treatmentPerformed || selectedVisitSummary.treatmentDescription || selectedVisitSummary.treatment || selectedVisitSummary.description || 'Not recorded'}</span></p>
+                  <p>Follow-up Notes: <span className="font-semibold text-slate-800">{selectedVisitSummary.recommendations || selectedVisitSummary.followUpNotes || selectedVisitSummary.nextVisitRecommendation || selectedVisitSummary.clinicalFollowUp?.reason || 'Not recorded'}</span></p>
+                </div>
+              </section>
+
+              <section className="rounded-2xl bg-slate-50 p-4">
+                <h3 className="font-semibold text-sky-950">Appointment & Receipt</h3>
+                {selectedVisitAppointment ? (
+                  <div className="mt-3 grid gap-2 text-sm text-slate-600">
+                    <p>Appointment: <span className="font-semibold text-slate-800">{selectedVisitAppointment.appointmentId || `APT-${String(selectedVisitAppointment._id || selectedVisitAppointment.id || '').slice(-6).toUpperCase()}`}</span></p>
+                    <p>Date: <span className="font-semibold text-slate-800">{selectedVisitAppointment.appointmentDate ? new Date(selectedVisitAppointment.appointmentDate).toLocaleDateString() : 'Not recorded'}</span></p>
+                    <p>Service: <span className="font-semibold text-slate-800">{selectedVisitAppointment.service || 'Not recorded'}</span></p>
+                    <p>Appointment status: <span className="font-semibold text-slate-800">{String(selectedVisitAppointment.status || 'Not recorded').replaceAll('_', ' ')}</span></p>
+                    <p>Receipt: <span className="font-semibold text-slate-800">REC-{String(selectedVisitAppointment.appointmentId || selectedVisitAppointment._id || selectedVisitAppointment.id || '').slice(-8).toUpperCase()}</span></p>
+                    <p>Final amount: <span className="font-semibold text-slate-800">
+                      {Number.isFinite(Number(selectedVisitAppointment.finalPrice))
+                        ? `₱${Number(selectedVisitAppointment.finalPrice).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                        : Number.isFinite(Number(selectedVisitAppointment.servicePriceSnapshot))
+                          ? `₱${Number(selectedVisitAppointment.servicePriceSnapshot).toLocaleString('en-PH', { minimumFractionDigits: 2 })}`
+                          : 'Not recorded'}
+                    </span></p>
+                    {selectedVisitAppointment.paymentStatus ? <p>Payment status: <span className="font-semibold text-slate-800">{String(selectedVisitAppointment.paymentStatus).replaceAll('_', ' ')}</span></p> : null}
+                    <button
+                      type="button"
+                      onClick={() => setReceiptAppointment(selectedVisitAppointment)}
+                      className="mt-2 inline-flex w-fit items-center gap-2 rounded-xl bg-sky-950 px-4 py-2 text-xs font-bold text-white transition hover:bg-sky-900"
+                    >
+                      <FaFileInvoiceDollar className="h-3.5 w-3.5" /> Open Official Receipt
+                    </button>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">No linked appointment or receipt information was found for this visit.</p>
+                )}
+              </section>
+
+              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
+                <h3 className="font-semibold text-sky-950">Clinical Notes</h3>
+                {isLoadingPatientHistory ? (
+                  <p className="mt-3 text-sm text-slate-500">Loading clinical history...</p>
+                ) : selectedVisitNotes.length ? (
+                  <div className="mt-3 grid gap-3">
+                    {selectedVisitNotes.map((note) => (
+                      <article key={note._id || note.id} className="rounded-xl bg-white p-4">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
+                          {note.noteType || 'Clinical Note'} • {note.visitDate ? new Date(note.visitDate).toLocaleDateString() : 'Date not recorded'}
+                        </p>
+                        {Object.entries(note.clinicalNotes || {}).filter(([, value]) => value).map(([label, value]) => (
+                          <p key={label} className="mt-2 text-sm text-slate-600">
+                            <span className="font-semibold capitalize text-sky-950">{label.replaceAll(/([A-Z])/g, ' $1')}:</span> {value}
+                          </p>
+                        ))}
+                        {note.followUp?.enabled || note.clinicalFollowUp ? (
+                          <p className="mt-2 text-sm text-slate-600">
+                            Return appointment: {note.followUp?.date || note.clinicalFollowUp?.appointmentDate || 'Recommended'}
+                            {note.followUp?.reason ? ` • ${note.followUp.reason}` : ''}
+                          </p>
+                        ) : null}
+                      </article>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">No clinical note was linked to this visit.</p>
+                )}
+              </section>
+
+              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
+                <h3 className="font-semibold text-sky-950">X-rays, Clinical Photos & Files</h3>
+                {isLoadingVisitDetails ? (
+                  <p className="mt-3 text-sm text-slate-500">Loading treatment files...</p>
+                ) : selectedVisitAttachments.length ? (
+                  <ul className="mt-3 grid gap-3 sm:grid-cols-2">
+                    {selectedVisitAttachments.map((attachment, index) => (
+                      <li key={attachment.id || attachment._id || attachment.path || index} className="overflow-hidden rounded-xl border border-slate-200 bg-white">
+                        <ClinicalAttachmentUrl attachment={attachment}>
+                          {(url, error) => (
+                            <>
+                              {url && String(attachment.mimeType || '').startsWith('image/') ? (
+                                <a href={url} target="_blank" rel="noreferrer" className="block bg-slate-100">
+                                  <img src={url} alt={attachment.name || 'Clinical image'} className="h-44 w-full object-contain" />
+                                </a>
+                              ) : null}
+                              <div className="flex items-center justify-between gap-3 p-3">
+                                <div className="min-w-0">
+                                  <p className="truncate text-sm font-semibold text-slate-700">{attachment.name || attachment.filename || attachment.originalName || 'Clinical attachment'}</p>
+                                  {error ? <p className="mt-1 text-xs text-red-600">{error}</p> : null}
+                                  {!url && !error ? <p className="mt-1 text-xs text-slate-500">File preview unavailable.</p> : null}
+                                </div>
+                                {url && !String(attachment.mimeType || '').startsWith('image/') ? (
+                                  <a href={url} target="_blank" rel="noreferrer" className="shrink-0 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-bold text-sky-900 hover:bg-sky-50">
+                                    View file
+                                  </a>
+                                ) : null}
+                              </div>
+                            </>
+                          )}
+                        </ClinicalAttachmentUrl>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-3 text-sm text-slate-500">No files are attached to this treatment record.</p>
+                )}
+              </section>
+
+              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
+                <DentalChart
+                  records={[selectedVisitSummary]}
+                  selectedTooth={selectedVisitSummary.toothNumber || ''}
+                  initialToothColors={selectedVisitSummary.toothColorMap instanceof Map
+                    ? Object.fromEntries(selectedVisitSummary.toothColorMap)
+                    : (selectedVisitSummary.toothColorMap || {})}
+                  interactive={false}
+                  title={`Dental Diagram — ${fullName(selectedPatient)}`}
+                />
+              </section>
+
+            </div>
+          </section>
+        </div>
+      ) : null}
+
+      {receiptAppointment ? (
+        <AppointmentReceiptModal
+          appointment={receiptAppointment}
+          onClose={() => setReceiptAppointment(null)}
+        />
       ) : null}
 
       {isDrawerOpen ? (

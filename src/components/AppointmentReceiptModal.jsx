@@ -65,8 +65,21 @@ function AppointmentReceiptModal({ appointment, onClose }) {
         ? Number(appointment.finalPrice)
         : 0
 
-  const discountAmount = Number.isFinite(Number(appointment.discountAmount)) ? Number(appointment.discountAmount) : 0
-  const finalPrice = Number.isFinite(Number(appointment.finalPrice)) ? Number(appointment.finalPrice) : Math.max(originalPrice - discountAmount, 0)
+  const storedDiscountAmount = Number(appointment.discountAmount)
+  const configuredPromoValue = Number(appointment.promoDiscountValue)
+  const calculatedPromoDiscount = appointment.promoDiscountType === 'percentage'
+    ? originalPrice * Math.min(Math.max(configuredPromoValue || 0, 0), 100) / 100
+    : Math.min(Math.max(configuredPromoValue || 0, 0), originalPrice)
+  const discountAmount = Number.isFinite(storedDiscountAmount) && storedDiscountAmount > 0
+    ? storedDiscountAmount
+    : appointment.promoCode || appointment.promoTitle
+      ? Math.min(Math.round(calculatedPromoDiscount * 100) / 100, originalPrice)
+      : 0
+  const finalPrice = discountAmount > 0
+    ? Math.max(Math.round((originalPrice - discountAmount) * 100) / 100, 0)
+    : Number.isFinite(Number(appointment.finalPrice))
+      ? Number(appointment.finalPrice)
+      : originalPrice
 
   const isCompleted = appointment.status === 'completed' || Boolean(appointment.hasTreatmentRecord)
   const isCancelled = ['cancelled', 'declined'].includes(appointment.status)
@@ -249,7 +262,7 @@ function AppointmentReceiptModal({ appointment, onClose }) {
                     {formatCurrency(originalPrice)}
                   </td>
                   <td className="px-4 py-3.5 text-right font-bold text-slate-900">
-                    {formatCurrency(originalPrice)}
+                    {formatCurrency(finalPrice)}
                   </td>
                 </tr>
               </tbody>
@@ -263,9 +276,9 @@ function AppointmentReceiptModal({ appointment, onClose }) {
                   <span className="font-semibold text-slate-900">{formatCurrency(originalPrice)}</span>
                 </div>
 
-                {discountAmount > 0 ? (
+                {discountAmount > 0 || appointment.promoCode || appointment.promoTitle ? (
                   <div className="flex justify-between text-emerald-700 font-semibold">
-                    <span>Discount ({appointment.promoCode || 'Promo'})</span>
+                    <span>Promo deduction ({appointment.promoCode || appointment.promoTitle || 'Promo'})</span>
                     <span>-{formatCurrency(discountAmount)}</span>
                   </div>
                 ) : null}
