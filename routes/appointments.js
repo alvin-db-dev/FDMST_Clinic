@@ -241,14 +241,6 @@ const createAutomaticTreatmentRecord = async (appointment, user) => {
               { notes: { $nin: [null, ""] } },
             ],
           },
-          {
-            $nor: [
-              { "clinicalNotes.observation": { $nin: [null, ""] } },
-              { "clinicalNotes.assessment": { $nin: [null, ""] } },
-              { "clinicalNotes.recommendations": { $nin: [null, ""] } },
-              { "clinicalNotes.additionalNotes": { $nin: [null, ""] } },
-            ],
-          },
         ],
       },
     ],
@@ -701,7 +693,6 @@ const sanitizeAppointment = (appointment) => ({
   statusUpdatedByEmail: appointment.statusUpdatedByEmail,
   estimatedRevenueAmount: appointment.estimatedRevenueAmount,
   status: getDisplayAppointmentStatus(appointment),
-  clinicalRecommendation: appointment.clinicalRecommendation || "",
   createdAt: appointment.createdAt,
 });
 
@@ -1228,30 +1219,8 @@ router.get(
           ? leftDate.getTime() - rightDate.getTime()
           : rightDate.getTime() - leftDate.getTime();
       });
-    const appointmentIds = appointments.map((appointment) => appointment._id).filter(Boolean);
-    const clinicalNotes = appointmentIds.length
-      ? await DentalRecord.find({
-          appointment: { $in: appointmentIds },
-          recordType: "clinical_note",
-          "clinicalNotes.recommendations": { $nin: [null, ""] },
-        })
-        .select("appointment clinicalNotes.recommendations updatedAt createdAt")
-        .sort({ updatedAt: -1, createdAt: -1 })
-        .lean()
-      : [];
-    const recommendationsByAppointment = new Map();
-
-    clinicalNotes.forEach((note) => {
-      const appointmentId = String(note.appointment || "");
-      if (!appointmentId || recommendationsByAppointment.has(appointmentId)) return;
-      recommendationsByAppointment.set(appointmentId, note.clinicalNotes?.recommendations || "");
-    });
-
     res.json({
-      data: appointments.map((appointment) => sanitizeAppointment({
-        ...appointment,
-        clinicalRecommendation: recommendationsByAppointment.get(String(appointment._id)) || "",
-      })),
+      data: appointments.map(sanitizeAppointment),
     });
   }),
 );

@@ -736,7 +736,7 @@ router.get(
       AuditLog.find({
         createdAt: { $gte: activityStart, $lte: activityEnd },
         action: {
-          $regex: /Appointment|Clinical Note|Treatment Record|Patient|Staff|Login/i,
+          $regex: /Appointment|Treatment Record|Patient|Staff|Login/i,
         },
       })
         .sort({ createdAt: -1 })
@@ -1108,7 +1108,7 @@ router.get(
         .limit(8),
       AuditLog.find({
         createdAt: { $gte: todayStart, $lte: todayEnd },
-        action: { $regex: /Appointment confirmed|Appointment checked_in|Appointment in_consultation|Appointment completed|Appointment rescheduled|Appointment cancelled|Clinical Note|Treatment Record/i },
+        action: { $regex: /Appointment confirmed|Appointment checked_in|Appointment in_consultation|Appointment completed|Appointment rescheduled|Appointment cancelled|Treatment Record/i },
       })
         .sort({ createdAt: -1 })
         .limit(8)

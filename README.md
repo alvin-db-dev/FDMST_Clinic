@@ -85,6 +85,18 @@ Add the variables below as environment variables on the app. Leave `VITE_API_URL
 
 Create the Supabase buckets named by the storage variables before deployment. The main image bucket must permit the intended public image access. Clinical and chat buckets should remain private because the API creates expiring signed URLs for those files.
 
+### Legacy Clinical-Note Data Cleanup
+
+Back up MongoDB before running this one-time cleanup. With the application environment configured, run from the repository root in PowerShell:
+
+```powershell
+$env:CONFIRM_CLINICAL_NOTE_DATA_DELETION = "YES"
+npm run remove:clinical-notes
+Remove-Item Env:CONFIRM_CLINICAL_NOTE_DATA_DELETION
+```
+
+The migration deletes legacy clinical-note records and note-only fields, and removes managed attachments only when no other record references them. Shared or unmanaged attachments are retained.
+
 ### Health Checks
 
 - Liveness: `GET /api/health`

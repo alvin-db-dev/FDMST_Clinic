@@ -75,6 +75,13 @@ test("recognizes only files in the managed private clinical bucket", () => {
       path: "clinical-notes/2026-09/1789900000000-0123456789abcdef01234567-xray.png",
     };
     assert.equal(isManagedClinicalFile(attachment), true);
+    assert.equal(
+      isManagedClinicalFile({
+        ...attachment,
+        path: "treatment-records/2026-09/1789900000000-0123456789abcdef01234567-xray.png",
+      }),
+      true,
+    );
     assert.equal(isManagedClinicalFile({ ...attachment, bucket: "fdmst-images" }), false);
     assert.equal(isManagedClinicalFile({ ...attachment, path: "clinical-notes/../../xray.png" }), false);
   } finally {

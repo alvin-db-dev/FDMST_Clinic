@@ -7,7 +7,6 @@ import {
   FaEye,
   FaFileMedical,
   FaMapMarkerAlt,
-  FaNotesMedical,
   FaPhone,
   FaPlus,
   FaSearch,
@@ -255,7 +254,6 @@ function StaffPatientsPage() {
 
   const quickActions = [
     ['Create Appointment', FaCalendarAlt, `${basePath}/appointments`],
-    ['Add Clinical Note', FaNotesMedical, `${basePath}/clinical-notes`],
     ['Add Treatment Record', FaFileMedical, `${basePath}/treatment-records`],
     ['View Appointment History', FaClipboardList, null],
   ]
@@ -388,11 +386,6 @@ function StaffPatientsPage() {
                 {selectedPatient.treatmentRecords?.length ? selectedPatient.treatmentRecords.slice(0, 6).map((record) => (
                   <p key={record._id}>{formatDate(record.visitDate || record.createdAt)} • {record.procedure || record.treatment || record.servicePerformed || 'Treatment'} • {record.treatmentStatus || 'completed'}</p>
                 )) : <p>No treatment records found.</p>}
-              </SectionCard>
-              <SectionCard title="Clinical Notes">
-                {selectedPatient.clinicalNotes?.length ? selectedPatient.clinicalNotes.slice(0, 6).map((record) => (
-                  <p key={record._id}>{formatDate(record.visitDate || record.createdAt)} • {record.noteType || 'Clinical Note'} • {record.createdByName || record.dentistName || 'Provider'}</p>
-                )) : <p>No clinical notes found.</p>}
               </SectionCard>
             </div>
           </div>

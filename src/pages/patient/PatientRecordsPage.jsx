@@ -65,15 +65,13 @@ function formatGender(value) {
 
 function formatDateKey(dateValue) {
   if (!dateValue) return ''
-  try {
-    const d = new Date(dateValue)
-    if (!Number.isNaN(d.getTime())) {
-      const year = d.getFullYear()
-      const month = String(d.getMonth() + 1).padStart(2, '0')
-      const day = String(d.getDate()).padStart(2, '0')
-      return `${year}-${month}-${day}`
-    }
-  } catch {}
+  const d = new Date(dateValue)
+  if (!Number.isNaN(d.getTime())) {
+    const year = d.getFullYear()
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }
   return String(dateValue).slice(0, 10)
 }
 
@@ -708,12 +706,6 @@ function PatientRecordsPage() {
 	                      </button>
 	                    </div>
 	                  </div>
-	                  {appointment.clinicalRecommendation ? (
-	                    <div className="mt-4 rounded-xl border border-emerald-100 bg-white p-3">
-	                      <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">Dentist Recommendation</p>
-	                      <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-600">{appointment.clinicalRecommendation}</p>
-	                    </div>
-	                  ) : null}
 	                </div>
 	              )) : (
                 <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-6 text-center text-sm text-slate-500">No appointment history yet.</p>

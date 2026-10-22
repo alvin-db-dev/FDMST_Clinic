@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
+import { useLocation } from 'react-router-dom'
 import {
   FaCalendarAlt,
   FaCamera,
@@ -13,7 +13,6 @@ import {
   FaFileExport,
   FaFileMedicalAlt,
   FaImage,
-  FaPaperclip,
   FaPlus,
   FaPrint,
   FaSearch,
@@ -133,7 +132,7 @@ const toForm = (record) => ({
 
 export { emptyForm, toForm }
 
-export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, canEdit, onAddClinicalNote, xrayOnlyUpload = false, hideTreatmentPlan = false, canEditPatientAllergies = false }) {
+export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, canEdit, xrayOnlyUpload = false, hideTreatmentPlan = false, canEditPatientAllergies = false }) {
   const isReadonly = mode === 'view' || !canEdit
   const update = (key, value) => setForm((current) => ({ ...current, [key]: value }))
   const [patients, setPatients] = useState([])
@@ -909,7 +908,6 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
 
                 {/* Pending attachments */}
                 {pendingAttachments.map((item) => {
-                  const isImage = item.file.type.startsWith('image/')
                   const isXray = item.category === 'xray'
                   return (
                     <article
@@ -968,11 +966,6 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
 
         <div className="flex flex-col gap-3 border-t border-slate-100 px-6 py-5 sm:flex-row sm:justify-end">
           <button type="button" className="h-11 rounded-xl border border-slate-200 px-5 text-sm font-bold text-slate-600 hover:bg-slate-50" onClick={onClose}>{mode === 'view' ? 'Back' : 'Cancel'}</button>
-          {mode === 'view' && onAddClinicalNote ? (
-            <button type="button" className="h-11 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900" onClick={onAddClinicalNote}>
-              Add Clinical Note
-            </button>
-          ) : null}
           {mode !== 'view' && canEdit ? (
             <button type="button" className="h-11 rounded-xl bg-sky-950 px-5 text-sm font-bold text-white hover:bg-sky-900 disabled:opacity-60" disabled={isSaving || isUploadingFiles || isLoadingPatientAllergies || isSavingAllergies} onClick={handleModalSubmit}>
               {isSaving || isUploadingFiles || isSavingAllergies ? 'Saving...' : mode === 'create' ? 'Create Treatment Record' : 'Save Changes'}
@@ -1080,7 +1073,6 @@ export function RecordModal({ mode, form, setForm, onClose, onSubmit, isSaving, 
 function StaffTreatmentRecordsPage() {
   const toast = useToast()
   const location = useLocation()
-  const navigate = useNavigate()
   const currentUser = authStorage.getUser()
   const isAdmin = currentUser?.role === 'admin'
   const isStaff = currentUser?.role === 'staff'
@@ -1454,11 +1446,6 @@ function StaffTreatmentRecordsPage() {
           onSubmit={saveRecord}
           isSaving={isSaving}
           canEdit={modal.mode === 'create' || canEditRecord(modal.record, currentUser)}
-          onAddClinicalNote={
-            modal.mode === 'view' && form.appointment && !isStaff
-              ? () => navigate('/admin/clinical-notes?appointment=' + form.appointment)
-              : null
-          }
           canEditPatientAllergies={isAdmin}
         />
       ) : null}

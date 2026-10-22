@@ -159,8 +159,6 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   const [selectedVisitSummary, setSelectedVisitSummary] = useState(null)
   const [isLoadingVisitDetails, setIsLoadingVisitDetails] = useState(false)
   const [receiptAppointment, setReceiptAppointment] = useState(null)
-  const [selectedClinicalNotes, setSelectedClinicalNotes] = useState([])
-  const [isLoadingPatientHistory, setIsLoadingPatientHistory] = useState(false)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [genderFilter, setGenderFilter] = useState('all')
@@ -249,19 +247,13 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   useEffect(() => {
     setSelectedVisitSummary(null)
     setReceiptAppointment(null)
-    setSelectedClinicalNotes([])
     if (!selectedPatient?._id && !selectedPatient?.id) {
-      setIsLoadingPatientHistory(false)
       return
     }
     let isMounted = true
     const patientId = selectedPatient._id || selectedPatient.id
-    setIsLoadingPatientHistory(true)
-    Promise.all([
-      fdmstApi.getTreatmentRecords({ patient: patientId, limit: 100 }),
-      fdmstApi.getClinicalNotes({ patient: patientId, limit: 100 }),
-    ])
-      .then(([treatmentResponse, noteResponse]) => {
+    fdmstApi.getTreatmentRecords({ patient: patientId, limit: 100 })
+      .then((treatmentResponse) => {
         if (!isMounted) return
         const treatmentRecords = treatmentResponse?.data || []
         setRecords((prev) => {
@@ -272,44 +264,14 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
           })
           return Array.from(map.values())
         })
-        setSelectedClinicalNotes(noteResponse?.data || [])
       })
       .catch((error) => {
         if (isMounted) toast.error(error.message || 'Unable to load this patient’s clinical history.')
-      })
-      .finally(() => {
-        if (isMounted) setIsLoadingPatientHistory(false)
       })
     return () => {
       isMounted = false
     }
   }, [selectedPatient, toast])
-
-  const selectedVisitNotes = useMemo(() => {
-    if (!selectedVisitSummary) return []
-    const visitDate = String(selectedVisitSummary.visitDate || selectedVisitSummary.createdAt || '').slice(0, 10)
-    const visitAppointmentId = String(
-      selectedVisitSummary.appointment?._id
-      || selectedVisitSummary.appointment?.id
-      || selectedVisitSummary.appointment
-      || selectedVisitSummary.appointmentSnapshot?._id
-      || selectedVisitSummary.appointmentSnapshot?.id
-      || '',
-    )
-    return selectedClinicalNotes.filter((note) => {
-      const noteAppointmentId = String(
-        note.appointment?._id
-        || note.appointment?.id
-        || note.appointment
-        || note.appointmentSnapshot?._id
-        || note.appointmentSnapshot?.id
-        || '',
-      )
-      const noteDate = String(note.visitDate || note.createdAt || '').slice(0, 10)
-      return (visitAppointmentId && noteAppointmentId === visitAppointmentId)
-        || (visitDate && noteDate === visitDate)
-    })
-  }, [selectedClinicalNotes, selectedVisitSummary])
 
   const selectedVisitAppointment = useMemo(() => {
     if (!selectedVisitSummary) return null
@@ -331,17 +293,14 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
   }, [selectedAppointments, selectedVisitSummary])
 
   const selectedVisitAttachments = useMemo(() => {
-    const attachments = [
-      ...(selectedVisitSummary?.attachments || []),
-      ...selectedVisitNotes.flatMap((note) => note.attachments || []),
-    ]
+    const attachments = selectedVisitSummary?.attachments || []
     const uniqueAttachments = new Map()
     attachments.forEach((attachment, index) => {
       const key = String(attachment.id || attachment._id || attachment.path || attachment.url || `${attachment.name || 'attachment'}-${index}`)
       if (!uniqueAttachments.has(key)) uniqueAttachments.set(key, attachment)
     })
     return Array.from(uniqueAttachments.values())
-  }, [selectedVisitNotes, selectedVisitSummary])
+  }, [selectedVisitSummary])
 
   const openVisitSummary = async (record) => {
     setSelectedVisitSummary(record)
@@ -694,7 +653,6 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                 </div>
               </section>
               <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Appointment History</h3>{selectedAppointments.length ? selectedAppointments.map((item) => <p key={item.id} className="mt-2 text-sm text-slate-600">{new Date(item.appointmentDate).toLocaleDateString()} • {item.service} • {item.status}</p>) : <p className="mt-3 text-sm text-slate-500">No appointments found.</p>}</section>
-              <section className="rounded-2xl bg-slate-50 p-4"><h3 className="font-semibold text-sky-950">Clinical Notes</h3>{selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).length ? selectedRecords.filter((item) => item.recordType === 'clinical_note' || item.clinicalNotes).map((item) => <p key={item._id} className="mt-2 text-sm text-slate-600">{new Date(item.visitDate || item.createdAt).toLocaleDateString()} • {item.noteType || 'Clinical Note'} • {item.createdByName || item.dentistName || 'Provider'}</p>) : <p className="mt-3 text-sm text-slate-500">No clinical notes found.</p>}</section>
               <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
                 <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 border-b border-slate-200/80 pb-3">
                   <div>
@@ -829,7 +787,7 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                   <p>Diagnostic: <span className="font-semibold text-slate-800">{selectedVisitSummary.diagnosis || selectedVisitSummary.diagnostic || 'Not recorded'}</span></p>
                   <p>Materials Used: <span className="font-semibold text-slate-800">{selectedVisitSummary.materialsUsed || 'Not recorded'}</span></p>
                   <p>Treatment Description: <span className="font-semibold text-slate-800">{selectedVisitSummary.treatmentPerformed || selectedVisitSummary.treatmentDescription || selectedVisitSummary.treatment || selectedVisitSummary.description || 'Not recorded'}</span></p>
-                  <p>Follow-up Notes: <span className="font-semibold text-slate-800">{selectedVisitSummary.recommendations || selectedVisitSummary.followUpNotes || selectedVisitSummary.nextVisitRecommendation || selectedVisitSummary.clinicalFollowUp?.reason || 'Not recorded'}</span></p>
+                  <p>Follow-up Notes: <span className="font-semibold text-slate-800">{selectedVisitSummary.recommendations || selectedVisitSummary.followUpNotes || selectedVisitSummary.nextVisitRecommendation || 'Not recorded'}</span></p>
                 </div>
               </section>
 
@@ -860,36 +818,6 @@ function AdminPatientsPage({ quickCreate = false, onClose }) {
                   </div>
                 ) : (
                   <p className="mt-3 text-sm text-slate-500">No linked appointment or receipt information was found for this visit.</p>
-                )}
-              </section>
-
-              <section className="rounded-2xl bg-slate-50 p-4 lg:col-span-2">
-                <h3 className="font-semibold text-sky-950">Clinical Notes</h3>
-                {isLoadingPatientHistory ? (
-                  <p className="mt-3 text-sm text-slate-500">Loading clinical history...</p>
-                ) : selectedVisitNotes.length ? (
-                  <div className="mt-3 grid gap-3">
-                    {selectedVisitNotes.map((note) => (
-                      <article key={note._id || note.id} className="rounded-xl bg-white p-4">
-                        <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
-                          {note.noteType || 'Clinical Note'} • {note.visitDate ? new Date(note.visitDate).toLocaleDateString() : 'Date not recorded'}
-                        </p>
-                        {Object.entries(note.clinicalNotes || {}).filter(([, value]) => value).map(([label, value]) => (
-                          <p key={label} className="mt-2 text-sm text-slate-600">
-                            <span className="font-semibold capitalize text-sky-950">{label.replaceAll(/([A-Z])/g, ' $1')}:</span> {value}
-                          </p>
-                        ))}
-                        {note.followUp?.enabled || note.clinicalFollowUp ? (
-                          <p className="mt-2 text-sm text-slate-600">
-                            Return appointment: {note.followUp?.date || note.clinicalFollowUp?.appointmentDate || 'Recommended'}
-                            {note.followUp?.reason ? ` • ${note.followUp.reason}` : ''}
-                          </p>
-                        ) : null}
-                      </article>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="mt-3 text-sm text-slate-500">No clinical note was linked to this visit.</p>
                 )}
               </section>
 

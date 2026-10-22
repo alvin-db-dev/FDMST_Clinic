@@ -25,7 +25,6 @@ import PatientRecordsPage from './pages/patient/PatientRecordsPage.jsx'
 import ProfilePage from './pages/ProfilePage.jsx'
 import RegisterPage from './pages/RegisterPage.jsx'
 import SignInPage from './pages/SignInPage.jsx'
-import StaffClinicalNotesPage from './pages/staff/StaffClinicalNotesPage.jsx'
 import StaffInventoryPage from './pages/staff/StaffInventoryPage.jsx'
 import StaffLandingPage from './pages/staff/StaffLandingPage.jsx'
 import StaffPatientsPage from './pages/staff/StaffPatientsPage.jsx'
@@ -39,7 +38,6 @@ const adminNavItems = [
   { label: 'Staff', to: '/admin/staff', icon: 'staff', preserveFrom: true },
   { label: 'Appointments', to: '/admin/appointments', icon: 'appointments' },
   { label: 'Treatment Records', to: '/admin/treatment-records', icon: 'treatmentRecords' },
-  { label: 'Clinical Notes', to: '/admin/clinical-notes', icon: 'clinicalNotes' },
   { label: 'Analytics', to: '/admin/analytics', icon: 'analytics' },
   { label: 'Feedback', to: '/admin/feedback', icon: 'feedback' },
   { label: 'Reports', to: '/admin/reports', icon: 'reports' },
@@ -53,7 +51,6 @@ const staffNavItems = [
   { label: 'Appointments', to: '/staff/appointments', icon: 'appointments' },
   { label: 'Patients', to: '/staff/patients', icon: 'patients' },
   { label: 'Treatment Records', to: '/staff/treatment-records', icon: 'treatmentRecords' },
-  { label: 'Clinical Notes', to: '/staff/clinical-notes', icon: 'clinicalNotes' },
   { label: 'Reports', to: '/staff/reports', icon: 'reports' },
   { label: 'Inventory', to: '/staff/inventory', icon: 'inventory' },
   { label: 'Promotions', to: '/staff/promotions', icon: 'promotions' },
@@ -131,7 +128,6 @@ function App() {
         <Route path="treatment-records" element={<StaffTreatmentRecordsPage />} />
         <Route path="analytics" element={<AdminAnalyticsPage />} />
         <Route path="feedback" element={<AdminFeedbackPage />} />
-        <Route path="clinical-notes" element={<StaffClinicalNotesPage />} />
         <Route path="reports" element={<AdminReportsPage />} />
         <Route path="inventory" element={<AdminInventoryPage />} />
         <Route path="promotions" element={<AdminPromotionsPage />} />
@@ -164,7 +160,6 @@ function App() {
         <Route path="messages" element={<MessagesPage />} />
         <Route path="notifications" element={<AdminNotificationsPage />} />
         <Route path="treatment-records" element={<StaffTreatmentRecordsPage />} />
-        <Route path="clinical-notes" element={<StaffClinicalNotesPage />} />
         <Route path="reports" element={<StaffReportsPage />} />
         <Route path="inventory" element={<StaffInventoryPage />} />
         <Route path="promotions" element={<PatientPromotionsPage />} />

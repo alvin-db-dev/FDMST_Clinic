@@ -239,7 +239,7 @@ const uploadClinicalFileToSupabase = async ({ fileData, fileName, maxSizeBytes =
   }
 
   const storagePath = [
-    "clinical-notes",
+    "treatment-records",
     new Date().toISOString().slice(0, 7),
     `${Date.now()}-${crypto.randomBytes(12).toString("hex")}-${sanitizeBaseName(fileName || "attachment")}.${parsed.extension}`,
   ].join("/");
@@ -361,7 +361,7 @@ const isManagedClinicalFile = (attachment) => {
   const config = getClinicalStorageConfig();
   return attachment
     && String(attachment.bucket || "") === config.bucket
-    && /^clinical-notes\/\d{4}-\d{2}\/\d{13}-[a-f0-9]{24}-[a-z0-9_-]+\.(?:jpg|png|webp|pdf)$/.test(String(attachment.path || ""));
+    && /^(?:clinical-notes|treatment-records)\/\d{4}-\d{2}\/\d{13}-[a-f0-9]{24}-[a-z0-9_-]+\.(?:jpg|png|webp|pdf)$/.test(String(attachment.path || ""));
 };
 
 const createClinicalFileSignedUrl = async (attachment, expiresIn = 900) => {

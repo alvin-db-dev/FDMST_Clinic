@@ -12,7 +12,7 @@ const dentalRecordSchema = new mongoose.Schema(
     },
     recordType: {
       type: String,
-      enum: ["treatment_record", "clinical_note"],
+      enum: ["treatment_record"],
       default: "treatment_record",
       index: true,
     },
@@ -20,11 +20,6 @@ const dentalRecordSchema = new mongoose.Schema(
       type: String,
       trim: true,
       required: true,
-    },
-    noteType: {
-      type: String,
-      trim: true,
-      default: "Clinical Note",
     },
     visitDate: {
       type: Date,
@@ -66,24 +61,6 @@ const dentalRecordSchema = new mongoose.Schema(
     nextVisitRecommendation: {
       type: String,
       trim: true,
-    },
-    clinicalNotes: {
-      observation: {
-        type: String,
-        trim: true,
-      },
-      assessment: {
-        type: String,
-        trim: true,
-      },
-      recommendations: {
-        type: String,
-        trim: true,
-      },
-      additionalNotes: {
-        type: String,
-        trim: true,
-      },
     },
     attachments: [{
       name: {
@@ -129,33 +106,6 @@ const dentalRecordSchema = new mongoose.Schema(
         trim: true,
       },
     }],
-    clinicalFollowUp: {
-      enabled: {
-        type: Boolean,
-        default: false,
-      },
-      date: Date,
-      time: {
-        type: String,
-        trim: true,
-      },
-      reason: {
-        type: String,
-        trim: true,
-      },
-      appointment: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: "Appointment",
-      },
-      appointmentId: {
-        type: String,
-        trim: true,
-      },
-      status: {
-        type: String,
-        trim: true,
-      },
-    },
     treatmentPlan: {
       enabled: {
         type: Boolean,

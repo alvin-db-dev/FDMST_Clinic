@@ -623,12 +623,6 @@ function PatientLandingPage() {
               <div className="flex justify-between gap-4 border-b border-slate-100 pb-3"><dt className="text-slate-500">Promotion</dt><dd className="font-semibold text-sky-950">{selectedAppointment.promoCode || 'None'}</dd></div>
               <div className="flex justify-between gap-4"><dt className="text-slate-500">Status</dt><dd><AppointmentStatus status={selectedAppointment.status} /></dd></div>
             </dl>
-            {selectedAppointment.clinicalRecommendation ? (
-              <section className="mt-5 rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
-                <p className="text-sm font-semibold text-sky-950">Dentist Recommendation</p>
-                <p className="mt-2 whitespace-pre-line text-sm leading-6 text-slate-700">{selectedAppointment.clinicalRecommendation}</p>
-              </section>
-            ) : null}
             <AppointmentTimeline appointment={selectedAppointment} />
             <div className="mt-4 flex justify-end">
               <button
