@@ -39,7 +39,8 @@ if not exist "node_modules" (
   )
 )
 
-echo Starting FDMST. Open http://localhost:5173 in your browser.
+echo Starting FDMST. Your browser will open at http://localhost:5173 when ready.
+start "" /b powershell.exe -NoProfile -WindowStyle Hidden -Command "$deadline = (Get-Date).AddSeconds(60); do { try { $response = Invoke-WebRequest -Uri 'http://localhost:5173' -TimeoutSec 2 -UseBasicParsing; if ($response.StatusCode -ge 200) { Start-Process 'http://localhost:5173'; exit 0 } } catch { }; Start-Sleep -Seconds 1 } while ((Get-Date) -lt $deadline); Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.MessageBox]::Show('FDMST did not become available at http://localhost:5173 within 60 seconds.') | Out-Null"
 call npm run dev
 if errorlevel 1 (
   echo FDMST stopped with an error.
